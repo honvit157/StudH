@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Duolingo 3D Button Style Utilities */
+.btn-duo-green {
+  background-color: #58cc02;
+  box-shadow: 0 4px 0 0 #46a302;
+  transition: all 0.1s ease;
+}
+.btn-duo-green:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 0 #46a302;
+}
+
+.btn-duo-blue {
+  background-color: #1cb0f6;
+  box-shadow: 0 4px 0 0 #1899d6;
+  transition: all 0.1s ease;
+}
+.btn-duo-blue:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 0 #1899d6;
+}
+
+.btn-duo-red {
+  background-color: #ff4b4b;
+  box-shadow: 0 4px 0 0 #ea2b2b;
+  transition: all 0.1s ease;
+}
+.btn-duo-red:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 0 #ea2b2b;
+}
+
+.btn-duo-white {
+  background-color: #ffffff;
+  box-shadow: 0 4px 0 0 #e5e5e5;
+  transition: all 0.1s ease;
+}
+.btn-duo-white:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 0 #e5e5e5;
+}
