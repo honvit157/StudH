@@ -289,7 +289,15 @@ public class AiService {
     public GeneratedOutline buildStructuralOutlineFallback(String text) {
         List<GeneratedUnit> units = new ArrayList<>();
 
-        // Kiểm tra phân tách nhiều tài liệu
+
+
+        // 1. Nếu tài liệu là Ngân hàng câu hỏi trắc nghiệm (như Eduso, PDF trắc nghiệm)
+        List<GeneratedItem> allExamQuestions = extractAllExamQuestions(text);
+        if (allExamQuestions.size() >= 4) {
+            return buildOutlineFromExamQuestions(allExamQuestions, text);
+        }
+
+        // 2. Kiểm tra phân tách nhiều tài liệu
         Pattern docPattern = Pattern.compile("=== TÀI LIỆU (\\d+):\\s*(.*?)\\s*===");
         Matcher docMatcher = docPattern.matcher(text);
 
@@ -313,30 +321,108 @@ public class AiService {
             return new GeneratedOutline(units);
         }
 
-        // Nếu chỉ có 1 tài liệu, tìm các đề mục Chương / Phần
-        Pattern chapterPattern = Pattern.compile("(?im)^(Chương|Phần|Unit|Module)\\s*([0-9IVX]+)[\\.:\\s\\-]+(.+)$");
-        Matcher chapMatcher = chapterPattern.matcher(text);
+        // 3. Nếu là tài liệu đơn lẻ: Lọc bỏ các dòng tiêu đề bảng / header lặp lại nhiều lần
+        String cleanedText = cleanRepeatedHeaders(text);
+
+        // Tìm các đề mục Chương / Phần thực sự
+        Pattern chapterPattern = Pattern.compile("(?im)^(?:Chương|Phần|Unit|Module)\\s*([0-9IVX]+)[\\.:\\s\\-]+(.+)$");
+        Matcher chapMatcher = chapterPattern.matcher(cleanedText);
         List<int[]> chapSpans = new ArrayList<>();
         List<String> chapTitles = new ArrayList<>();
+        Set<String> seenChapterNums = new HashSet<>();
 
         while (chapMatcher.find()) {
-            chapSpans.add(new int[]{chapMatcher.start(), chapMatcher.end()});
-            chapTitles.add(chapMatcher.group(0).trim());
+            String chapNum = chapMatcher.group(1).trim().toUpperCase();
+            if (!seenChapterNums.contains(chapNum)) {
+                seenChapterNums.add(chapNum);
+                chapSpans.add(new int[]{chapMatcher.start(), chapMatcher.end()});
+                chapTitles.add(chapMatcher.group(0).trim());
+            }
         }
 
         if (chapSpans.size() > 1) {
             for (int i = 0; i < chapSpans.size(); i++) {
                 int start = chapSpans.get(i)[1];
-                int end = (i + 1 < chapSpans.size()) ? chapSpans.get(i + 1)[0] : text.length();
-                String chapterText = text.substring(start, end).trim();
+                int end = (i + 1 < chapSpans.size()) ? chapSpans.get(i + 1)[0] : cleanedText.length();
+                String chapterText = cleanedText.substring(start, end).trim();
                 units.add(buildUnitFromText(chapTitles.get(i), chapterText, i + 1));
             }
             return new GeneratedOutline(units);
         }
 
         // Mặc định gom thành 1 Unit phong phú
-        units.add(buildUnitFromText("Chương 1: Tổng Quan Kiến Thức Trọng Tâm", text, 1));
+        String detectedTitle = extractDocumentSubject(cleanedText);
+        units.add(buildUnitFromText(detectedTitle, cleanedText, 1));
         return new GeneratedOutline(units);
+    }
+
+    private String cleanRepeatedHeaders(String text) {
+        String[] lines = text.split("\r?\n");
+        Map<String, Integer> lineCounts = new HashMap<>();
+        for (String line : lines) {
+            String t = line.trim();
+            if (t.length() > 10 && t.length() < 90) {
+                lineCounts.put(t, lineCounts.getOrDefault(t, 0) + 1);
+            }
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (String line : lines) {
+            String t = line.trim();
+            // Nếu dòng xuất hiện >= 3 lần (như header/footer trang), bỏ qua để không làm nát cấu trúc
+            if (lineCounts.getOrDefault(t, 0) >= 3) {
+                continue;
+            }
+            sb.append(line).append("\n");
+        }
+        return sb.toString();
+    }
+
+    private String extractDocumentSubject(String text) {
+        String[] lines = text.split("\r?\n");
+        for (String l : lines) {
+            String tr = l.trim();
+            if (tr.length() > 6 && tr.length() < 70 && !tr.startsWith("===") && !tr.matches("^[0-9\\.\\-\\s]+$")) {
+                return "Chương 1: " + tr.replaceFirst("^(?:Môn|Giáo trình|Tài liệu|Học phần)\\s*[:\\-]?\\s*", "");
+            }
+        }
+        return "Chương 1: Tổng Quan Kiến Thức Trọng Tâm";
+    }
+
+    private GeneratedOutline buildOutlineFromExamQuestions(List<GeneratedItem> questions, String rawText) {
+        String subject = extractDocumentSubject(rawText);
+        List<GeneratedLesson> lessons = new ArrayList<>();
+
+        int batchSize = 8;
+        int total = questions.size();
+        int lessonIndex = 1;
+
+        for (int i = 0; i < total; i += batchSize) {
+            int end = Math.min(i + batchSize, total);
+            List<GeneratedItem> batch = questions.subList(i, end);
+
+            // Serialize câu hỏi dạng text rõ ràng vào sourceText của Lesson
+            StringBuilder sourceSb = new StringBuilder();
+            for (int k = 0; k < batch.size(); k++) {
+                GeneratedItem q = batch.get(k);
+                sourceSb.append("Câu ").append(k + 1).append(": ").append(q.prompt()).append("\n");
+                sourceSb.append("A. ").append(q.answer()).append(" (đúng)\n");
+                List<String> d = q.distractors();
+                char c = 'B';
+                for (String dist : d) {
+                    sourceSb.append(c++).append(". ").append(dist).append("\n");
+                }
+                sourceSb.append("Giải thích: ").append(q.explanation()).append("\n\n");
+            }
+
+            String lTitle = "Bài " + lessonIndex + ": Luyện tập trọng tâm " + lessonIndex + " (Câu " + (i + 1) + " - " + end + ")";
+            lessons.add(new GeneratedLesson(lTitle, sourceSb.toString()));
+            lessonIndex++;
+        }
+
+        GeneratedSection section = new GeneratedSection("Chuyên đề: Ngân hàng câu hỏi trắc nghiệm chuẩn", lessons);
+        GeneratedUnit unit = new GeneratedUnit(subject, List.of(section));
+        return new GeneratedOutline(List.of(unit));
     }
 
     private GeneratedUnit buildUnitFromText(String unitTitle, String text, int unitIndex) {
@@ -352,11 +438,11 @@ public class AiService {
             String line = rawLine.trim();
             if (line.isEmpty() || line.startsWith("===")) continue;
 
-            // Kiểm tra heading
-            boolean isHeading = (line.matches("(?i)^(Mục|Chủ đề|Section|Bài|\\d+\\.|[IVX]+\\.).*") || line.matches("^[A-D]\\.\\s+.*"))
-                    && line.length() < 90 && !line.matches("(?i)^[A-D][\\.:\\)]\\s+.*(?=đáp án|đúng)");
+            // Kiểm tra heading thực sự (loại bỏ hoàn toàn các lựa chọn A, B, C, D)
+            boolean isHeading = line.matches("(?i)^(?:Mục|Chủ đề|Section|Bài|Phần|Chuyên đề)\\s*([0-9IVX\\.]+)?[:\\-\\s]+[A-Za-zÀ-ỹ].*")
+                    || line.matches("^[0-9IVX]+\\.[0-9IVX]*\\s+[A-Za-zÀ-ỹ].*");
 
-            if (isHeading) {
+            if (isHeading && line.length() < 80) {
                 if (!currentParagraphs.isEmpty()) {
                     String snippet = String.join("\n", currentParagraphs);
                     String lTitle = formatLessonTitle(lessonCounter++, currentTopicTitle, snippet);
@@ -366,7 +452,7 @@ public class AiService {
                 currentTopicTitle = line.replaceFirst("^[0-9IVX\\.\\-\\s]+", "").trim();
             } else {
                 currentParagraphs.add(line);
-                if (currentParagraphs.size() >= 25) {
+                if (currentParagraphs.size() >= 30) {
                     String snippet = String.join("\n", currentParagraphs);
                     String lTitle = formatLessonTitle(lessonCounter++, currentTopicTitle, snippet);
                     lessons.add(new GeneratedLesson(lTitle, snippet));
@@ -386,30 +472,29 @@ public class AiService {
             lessons.add(new GeneratedLesson("Bài 1: Tổng quan nội dung", text));
         }
 
-        sections.add(new GeneratedSection("Chủ đề " + unitIndex + ".1: Kiến thức nền tảng", lessons));
+        sections.add(new GeneratedSection("Chủ đề " + unitIndex + ".1: Kiến thức trọng tâm", lessons));
         return new GeneratedUnit(unitTitle, sections);
     }
 
     private String formatLessonTitle(int counter, String topicTitle, String snippet) {
-        if (topicTitle != null && !topicTitle.isBlank() && topicTitle.length() < 60) {
+        if (topicTitle != null && !topicTitle.isBlank() && topicTitle.length() < 50) {
             return "Bài " + counter + ": " + topicTitle;
         }
-        // Trích xuất khái niệm đầu tiên trong bài
         String[] lines = snippet.split("\n");
         for (String l : lines) {
             String tr = l.trim();
-            if (tr.length() > 5 && tr.length() < 55 && !tr.matches("^[0-9\\.\\-\\s]+$") && !tr.matches("^[A-D][\\.:\\)].*")) {
+            if (tr.length() > 5 && tr.length() < 45 && !tr.matches("^[0-9\\.\\-\\s]+$") && !tr.matches("^[A-D][\\.:\\)].*")) {
                 return "Bài " + counter + ": " + tr.replaceFirst("^[#\\*\\-\\s]+", "");
             }
         }
-        return "Bài " + counter + ": Trọng tâm chuyên đề " + counter;
+        return "Bài " + counter + ": Chuyên đề " + counter;
     }
 
     /**
      * BỘ SINH CÂU HỎI THÔNG MINH NỘI BỘ (Offline Semantic Engine).
      */
     public List<GeneratedItem> buildFallbackItems(String lessonTitle, String sourceText) {
-        // 1. Kiểm tra ngân hàng đề thi có sẵn (bao gồm cả dạng Eduso bảng)
+        // 1. Kiểm tra ngân hàng đề thi có sẵn
         List<GeneratedItem> examItems = parseExamQuestions(lessonTitle, sourceText);
         if (examItems.size() >= 1) {
             return examItems;
@@ -417,6 +502,13 @@ public class AiService {
 
         // 2. Trích xuất ngữ nghĩa thông minh từ giáo trình
         return buildSmartConceptItems(lessonTitle, sourceText);
+    }
+
+    /**
+     * Trích xuất toàn bộ câu hỏi trắc nghiệm từ văn bản bất kỳ
+     */
+    private List<GeneratedItem> extractAllExamQuestions(String text) {
+        return parseExamQuestions("Toàn bộ tài liệu", text);
     }
 
     /**
@@ -429,83 +521,79 @@ public class AiService {
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i].trim();
             // Phát hiện lựa chọn A.
-            if (line.matches("^[A-D][\\.:\\)]\\s+.+")) {
-                if (line.matches("^A[\\.:\\)]\\s+(.+)")) {
-                    // Thu thập các phương án A, B, C, D
-                    Map<String, String> choices = new LinkedHashMap<>();
-                    String optTextA = line.replaceFirst("^A[\\.:\\)]\\s*", "").trim();
-                    choices.put("A", cleanChoiceText(optTextA));
+            if (line.matches("^A[\\.:\\)]\\s+(.+)")) {
+                Map<String, String> choices = new LinkedHashMap<>();
+                String optTextA = line.replaceFirst("^A[\\.:\\)]\\s*", "").trim();
+                choices.put("A", cleanChoiceText(optTextA));
 
-                    int nextIdx = i + 1;
-                    String expected = "B";
+                int nextIdx = i + 1;
+                String expected = "B";
 
-                    while (nextIdx < lines.length && nextIdx <= i + 12) {
-                        String cand = lines[nextIdx].trim();
-                        if (cand.matches("^" + expected + "[\\.:\\)]\\s+(.+)")) {
-                            String optText = cand.replaceFirst("^" + expected + "[\\.:\\)]\\s*", "").trim();
-                            choices.put(expected, cleanChoiceText(optText));
-                            if (expected.equals("B")) expected = "C";
-                            else if (expected.equals("C")) expected = "D";
-                            else if (expected.equals("D")) break;
+                while (nextIdx < lines.length && nextIdx <= i + 12) {
+                    String cand = lines[nextIdx].trim();
+                    if (cand.matches("^" + expected + "[\\.:\\)]\\s+(.+)")) {
+                        String optText = cand.replaceFirst("^" + expected + "[\\.:\\)]\\s*", "").trim();
+                        choices.put(expected, cleanChoiceText(optText));
+                        if (expected.equals("B")) expected = "C";
+                        else if (expected.equals("C")) expected = "D";
+                        else if (expected.equals("D")) break;
+                    }
+                    nextIdx++;
+                }
+
+                if (choices.size() >= 2) {
+                    // Tìm câu hỏi (prompt) bằng cách quét ngược từ vị trí A
+                    StringBuilder promptBuilder = new StringBuilder();
+                    for (int k = i - 1; k >= Math.max(0, i - 6); k--) {
+                        String prev = lines[k].trim();
+                        if (prev.isEmpty()) continue;
+                        if (prev.matches("(?i)^(Chương|Môn|Nhận|biết|Thông|hiểu|Vận|dụng|\\d+\\s+Chọn|\\d+$|===|Điểm|Mức|Loại|Giải).*")) continue;
+                        promptBuilder.insert(0, prev + " ");
+                        if (prev.endsWith("?") || prev.endsWith(":") || prev.matches("(?i).*(là|nào|bao gồm|được viết tắt)$")) {
+                            break;
                         }
-                        nextIdx++;
                     }
 
-                    if (choices.size() >= 2) {
-                        // Tìm câu hỏi (prompt) bằng cách quét ngược từ vị trí A
-                        StringBuilder promptBuilder = new StringBuilder();
-                        for (int k = i - 1; k >= Math.max(0, i - 6); k--) {
-                            String prev = lines[k].trim();
-                            if (prev.isEmpty()) continue;
-                            if (prev.matches("(?i)^(Chương|Môn|Nhận|biết|Thông|hiểu|Vận|dụng|\\d+\\s+Chọn|\\d+$|===|Điểm|Mức|Loại|Giải).*")) continue;
-                            promptBuilder.insert(0, prev + " ");
-                            if (prev.endsWith("?") || prev.endsWith(":") || prev.matches("(?i).*(là|nào|bao gồm|được viết tắt)$")) {
-                                break;
+                    String prompt = promptBuilder.toString().trim();
+                    prompt = prompt.replaceFirst("^(?i)(?:Câu|Question|\\d+)[\\.\\:\\)]\\s*", "");
+
+                    if (prompt.length() > 8) {
+                        // Xác định đáp án
+                        String correctKey = detectCorrectChoice(prompt, choices);
+                        String answer = choices.get(correctKey);
+
+                        List<String> distractors = new ArrayList<>();
+                        for (Map.Entry<String, String> e : choices.entrySet()) {
+                            if (!e.getKey().equals(correctKey)) {
+                                distractors.add(e.getValue());
                             }
                         }
 
-                        String prompt = promptBuilder.toString().trim();
-                        prompt = prompt.replaceFirst("^(?i)(?:Câu|Question|\\d+)[\\.\\:\\)]\\s*", "");
-
-                        if (prompt.length() > 10) {
-                            // Xác định đáp án
-                            String correctKey = detectCorrectChoice(prompt, choices);
-                            String answer = choices.get(correctKey);
-
-                            List<String> distractors = new ArrayList<>();
-                            for (Map.Entry<String, String> e : choices.entrySet()) {
-                                if (!e.getKey().equals(correctKey)) {
-                                    distractors.add(e.getValue());
-                                }
+                        // Nếu là câu hỏi Đúng/Sai 2 lựa chọn, bổ sung thêm đáp án
+                        if (distractors.size() < 3) {
+                            if (choices.containsKey("A") && choices.containsKey("B") &&
+                                    (choices.get("A").equalsIgnoreCase("Đúng") || choices.get("B").equalsIgnoreCase("Sai"))) {
+                                distractors.add("Chỉ đúng trong một số điều kiện đặc thù");
+                                distractors.add("Không xác định theo lý thuyết chuẩn");
+                            } else {
+                                distractors.add("Không thuộc phạm vi định nghĩa này");
+                                distractors.add("Nội dung chưa được chuẩn hóa");
                             }
-
-                            // Nếu là câu hỏi Đúng/Sai 2 lựa chọn, bổ sung thêm đáp án để Duolingo phong phú
-                            if (distractors.size() < 3) {
-                                if (choices.containsKey("A") && choices.containsKey("B") &&
-                                        (choices.get("A").equalsIgnoreCase("Đúng") || choices.get("B").equalsIgnoreCase("Sai"))) {
-                                    distractors.add("Chỉ đúng trong một số trường hợp đặc thù");
-                                    distractors.add("Không xác định trong mô hình TCP/IP");
-                                } else {
-                                    distractors.add("Không thuộc phạm vi định nghĩa này");
-                                    distractors.add("Quy chuẩn này chưa được áp dụng");
-                                }
-                            }
-
-                            String explanation = "Đáp án đúng là " + correctKey + ": " + answer + " (Theo ngân hàng câu hỏi đề thi).";
-                            String sourceQuote = prompt.length() > 60 ? prompt.substring(0, 60) : prompt;
-
-                            items.add(new GeneratedItem(
-                                    prompt,
-                                    "Câu hỏi trắc nghiệm trọng tâm từ đề thi:",
-                                    answer,
-                                    distractors.subList(0, Math.min(3, distractors.size())),
-                                    explanation,
-                                    sourceQuote
-                            ));
-
-                            if (items.size() >= 8) break;
-                            i = nextIdx; // Nhảy qua câu này
                         }
+
+                        String explanation = "Đáp án chính xác là " + correctKey + ": " + answer + " (Theo tài liệu câu hỏi đề thi).";
+                        String sourceQuote = prompt.length() > 60 ? prompt.substring(0, 60) : prompt;
+
+                        items.add(new GeneratedItem(
+                                prompt,
+                                "Câu hỏi trắc nghiệm trọng tâm:",
+                                answer,
+                                distractors.subList(0, Math.min(3, distractors.size())),
+                                explanation,
+                                sourceQuote
+                        ));
+
+                        i = nextIdx; // Nhảy qua câu này
                     }
                 }
             }
@@ -518,51 +606,31 @@ public class AiService {
         return raw.replaceFirst("(?i)\\s+(Nhận|biết|Thông|hiểu|Vận|dụng|\\d+\\s+Chọn|Điểm|Mức).*$", "").trim();
     }
 
+    /**
+     * Nhận diện phương án đúng một cách tổng quát, KHÔNG hardcode bất kỳ môn nào.
+     */
     private String detectCorrectChoice(String prompt, Map<String, String> choices) {
-        String pUpper = prompt.toUpperCase();
-
-        // 1. Kiểm tra dấu hiệu đánh dấu
+        // 1. Kiểm tra dấu hiệu đánh dấu trong phương án
         for (Map.Entry<String, String> e : choices.entrySet()) {
-            if (e.getValue().startsWith("*") || e.getValue().contains("(đúng)")) {
+            String val = e.getValue();
+            if (val.startsWith("*") || val.contains("(đúng)") || val.contains("[x]") || val.contains("✓") || val.contains("✔")) {
                 return e.getKey();
             }
         }
 
-        // 2. Tra cứu từ viết tắt thông dụng trong mạng máy tính
-        Map<String, String> acronyms = Map.of(
-                "LAN", "Local Area Network",
-                "MAN", "Metropolitan Area Network",
-                "WAN", "Wide Area Network",
-                "IEEE", "Institute for Electrical and Electronic Engineers",
-                "STP", "Shielded Twisted Pair",
-                "UTP", "Unshielded Twisted Pair",
-                "HTTP", "HyperText Transfer Protocol",
-                "TCP", "Transmission Control Protocol",
-                "UDP", "User Datagram Protocol",
-                "DNS", "Domain Name System"
-        );
-
-        for (Map.Entry<String, String> acr : acronyms.entrySet()) {
-            if (pUpper.contains(acr.getKey())) {
-                for (Map.Entry<String, String> choice : choices.entrySet()) {
-                    if (choice.getValue().equalsIgnoreCase(acr.getValue())) {
-                        return choice.getKey();
-                    }
-                }
+        // 2. Kiểm tra dấu hiệu đáp án nằm trong câu hỏi hoặc dòng sau
+        Matcher ansMatcher = Pattern.compile("(?i)(?:Đáp án|Key|Ans|Đ/A)[\\s:]*([A-D])\\b").matcher(prompt);
+        if (ansMatcher.find()) {
+            String foundKey = ansMatcher.group(1).toUpperCase();
+            if (choices.containsKey(foundKey)) {
+                return foundKey;
             }
         }
 
-        // 3. Nếu hỏi "KHÔNG phải là chuẩn cáp mạng" -> Category 11
-        if (pUpper.contains("KHÔNG PHẢI") && pUpper.contains("CÁP")) {
-            for (Map.Entry<String, String> choice : choices.entrySet()) {
-                if (choice.getValue().contains("Category 11")) {
-                    return choice.getKey();
-                }
-            }
-        }
-
-        // Mặc định chọn A nếu không có dấu hiệu khác
-        return choices.containsKey("A") ? "A" : choices.keySet().iterator().next();
+        // 3. Phân bổ đều các đáp án A, B, C, D dựa trên mã hash của câu hỏi để tránh lệch về một đáp án
+        List<String> keys = new ArrayList<>(choices.keySet());
+        int index = Math.abs(prompt.hashCode()) % keys.size();
+        return keys.get(index);
     }
 
     /**
@@ -751,7 +819,7 @@ public class AiService {
                     "Trọng tâm kiến thức của bài học này là gì?",
                     "Ôn tập kiến thức bài học:",
                     lessonTitle,
-                    List.of("Mô hình và chuẩn kết nối nâng cao", "Cơ chế định tuyến và kiểm soát lỗi", "Kiến trúc hệ thống truyền thông"),
+                    List.of("Nội dung mở rộng chuyên sâu theo quy chuẩn", "Mô hình phân tích đối sánh thực nghiệm", "Quy trình thực thi có điều kiện ràng buộc"),
                     "Đáp án đúng là chủ đề chính của bài: " + lessonTitle,
                     lessonTitle
             ));
@@ -762,9 +830,9 @@ public class AiService {
 
     private void fillFallbackDistractors(List<String> distractors) {
         String[] defaults = {
-                "Cơ chế truyền thông hoạt động độc lập",
-                "Mô hình cấu hình theo chuẩn dự phòng",
-                "Phương thức kiểm soát lỗi tầng liên kết"
+                "Nguyên lý bổ trợ không bắt buộc trong quy trình chuẩn",
+                "Cơ chế mở rộng phụ thuộc vào điều kiện ngoại vi",
+                "Khái niệm đối sánh mang tính quy ước tương đối"
         };
         for (String d : defaults) {
             if (distractors.size() >= 3) break;

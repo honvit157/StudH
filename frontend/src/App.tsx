@@ -9,7 +9,7 @@ import StatsPage from './pages/StatsPage';
 import SettingsPage from './pages/SettingsPage';
 import CreateCourseModal from './pages/CreateCourseModal';
 import { apiRequest } from './api/client';
-import { Flame, Sparkles, BookOpen, MapPin, BarChart3, Calendar, Play, Plus, UploadCloud, Settings } from 'lucide-react';
+import { Flame, Sparkles, BookOpen, MapPin, BarChart3, Calendar, Play, Plus, UploadCloud, Settings, ChevronDown, Trash2 } from 'lucide-react';
 
 type Tab = 'home' | 'path' | 'schedule' | 'stats' | 'settings';
 
@@ -19,8 +19,11 @@ function AppContent() {
   const [inSession, setInSession] = useState(false);
   const [currentLessonId, setCurrentLessonId] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isCourseDropdownOpen, setIsCourseDropdownOpen] = useState(false);
   const [stats, setStats] = useState<any>(null);
+  const [coursesList, setCoursesList] = useState<any[]>([]);
   const [course, setCourse] = useState<any>(null);
+  const [firstReadyLesson, setFirstReadyLesson] = useState<{ id: string; title: string } | null>(null);
 
   const refreshData = async () => {
     try {
@@ -29,7 +32,37 @@ function AppContent() {
         apiRequest<any[]>('/api/courses').catch(() => []),
       ]);
       if (statsRes) setStats(statsRes);
-      if (coursesRes && coursesRes.length > 0) setCourse(coursesRes[0]);
+      const list = coursesRes || [];
+      setCoursesList(list);
+
+      let selectedCourse = null;
+      const savedCourseId = localStorage.getItem('studyapp_active_course_id');
+      if (savedCourseId && list.length > 0) {
+        selectedCourse = list.find((c: any) => c.id === savedCourseId);
+      }
+      if (!selectedCourse && list.length > 0) {
+        selectedCourse = list[0];
+      }
+      setCourse(selectedCourse);
+
+      if (selectedCourse) {
+        try {
+          const pathRes = await apiRequest<any>(`/api/courses/${selectedCourse.id}/path`);
+          if (pathRes?.units) {
+            const allLessons = pathRes.units.flatMap((u: any) => u.sections).flatMap((s: any) => s.lessons);
+            const readyLesson = allLessons.find((l: any) => l.status === 'ready');
+            if (readyLesson) {
+              setFirstReadyLesson({ id: readyLesson.id, title: readyLesson.title });
+            } else {
+              setFirstReadyLesson(null);
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      } else {
+        setFirstReadyLesson(null);
+      }
     } catch (e) {
       console.error(e);
     }
@@ -85,6 +118,77 @@ function AppContent() {
       <header className="sticky top-0 z-40 bg-white/90 dark:bg-duo-dark-card/90 backdrop-blur border-b border-slate-200 dark:border-duo-dark-border px-4 py-3 flex items-center justify-between max-w-lg mx-auto w-full">
         <div className="flex items-center space-x-2">
           <span className="text-xl font-black text-duo-green tracking-tight">StudyApp</span>
+          {coursesList.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={() => setIsCourseDropdownOpen(!isCourseDropdownOpen)}
+                className="flex items-center space-x-1 text-xs font-bold px-2 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition max-w-[130px] sm:max-w-[170px]"
+                title="Chọn môn học"
+              >
+                <span className="truncate">{course?.title || 'Chọn môn'}</span>
+                <ChevronDown className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
+              </button>
+
+              {isCourseDropdownOpen && (
+                <div className="absolute left-0 mt-1.5 w-64 bg-white dark:bg-duo-dark-card border-2 border-slate-200 dark:border-duo-dark-border rounded-2xl shadow-xl p-2 z-50 space-y-1">
+                  <div className="text-[10px] font-black uppercase text-slate-400 px-2 py-1">
+                    Danh sách môn học ({coursesList.length})
+                  </div>
+                  <div className="max-h-56 overflow-y-auto space-y-1">
+                    {coursesList.map((c) => {
+                      const isActive = course?.id === c.id;
+                      return (
+                        <div
+                          key={c.id}
+                          className={`flex items-center justify-between p-2 rounded-xl text-xs transition cursor-pointer ${
+                            isActive
+                              ? 'bg-emerald-50 dark:bg-emerald-950/50 text-duo-green font-black border border-emerald-200 dark:border-emerald-800'
+                              : 'hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold'
+                          }`}
+                          onClick={() => {
+                            localStorage.setItem('studyapp_active_course_id', c.id);
+                            setCourse(c);
+                            setIsCourseDropdownOpen(false);
+                            refreshData();
+                          }}
+                        >
+                          <span className="truncate flex-1 pr-2">{c.title}</span>
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              if (window.confirm(`Xóa môn học "${c.title}"?`)) {
+                                await apiRequest(`/api/courses/${c.id}`, { method: 'DELETE' });
+                                if (localStorage.getItem('studyapp_active_course_id') === c.id) {
+                                  localStorage.removeItem('studyapp_active_course_id');
+                                }
+                                refreshData();
+                              }
+                            }}
+                            className="text-slate-300 hover:text-red-500 p-1 rounded-lg transition"
+                            title="Xóa môn"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="pt-1 border-t border-slate-100 dark:border-duo-dark-border">
+                    <button
+                      onClick={() => {
+                        setIsCourseDropdownOpen(false);
+                        setIsCreateModalOpen(true);
+                      }}
+                      className="w-full text-xs font-bold text-duo-green hover:bg-emerald-50 dark:hover:bg-emerald-950/40 p-2 rounded-xl flex items-center justify-center space-x-1.5 transition"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Thêm môn học mới</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center space-x-2.5 sm:space-x-3">
@@ -140,9 +244,9 @@ function AppContent() {
             <div className="bg-white dark:bg-duo-dark-card border-2 border-slate-200 dark:border-duo-dark-border rounded-3xl p-6 shadow-sm">
               <div className="flex items-start justify-between mb-4">
                 <div>
-                  <span className="text-xs font-bold uppercase tracking-wider text-duo-blue">Khóa học hiện tại</span>
+                  <span className="text-xs font-bold uppercase tracking-wider text-duo-blue">Môn học đang chọn</span>
                   <h2 className="text-xl font-black text-slate-800 dark:text-white mt-0.5">
-                    {course?.title || 'Kiến Thức Lập Trình Web & Thuật Toán'}
+                    {course?.title || 'Chưa chọn môn học'}
                   </h2>
                 </div>
                 <div className="w-10 h-10 rounded-2xl bg-blue-50 dark:bg-blue-950/50 text-duo-blue flex items-center justify-center flex-shrink-0">
@@ -156,16 +260,22 @@ function AppContent() {
                 </p>
               )}
 
-              {/* Nút lớn Học hôm nay */}
+              {/* Nút lớn Bắt đầu học */}
               <button
                 onClick={() => {
-                  setCurrentLessonId(null);
+                  if (firstReadyLesson) {
+                    setCurrentLessonId(firstReadyLesson.id);
+                  } else {
+                    setCurrentLessonId(null);
+                  }
                   setInSession(true);
                 }}
                 className="w-full py-4 px-6 rounded-2xl font-black text-white uppercase tracking-wider text-sm flex items-center justify-center space-x-2 btn-duo-green"
               >
                 <Play className="w-5 h-5 fill-white" />
-                <span>Học hôm nay (Phiên học mới)</span>
+                <span className="truncate">
+                  {firstReadyLesson ? `Học tiếp: ${firstReadyLesson.title}` : 'Học hôm nay (Phiên học mới)'}
+                </span>
               </button>
 
               <div className="mt-4 pt-4 border-t border-slate-100 dark:border-duo-dark-border flex justify-between items-center text-xs">
@@ -204,10 +314,14 @@ function AppContent() {
         )}
 
         {activeTab === 'path' && (
-          <LearningPathPage onStartLesson={(lessonId) => {
-            setCurrentLessonId(lessonId);
-            setInSession(true);
-          }} />
+          <LearningPathPage
+            courseId={course?.id}
+            onCourseDeleted={refreshData}
+            onStartLesson={(lessonId) => {
+              setCurrentLessonId(lessonId);
+              setInSession(true);
+            }}
+          />
         )}
 
         {activeTab === 'schedule' && (

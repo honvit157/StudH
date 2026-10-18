@@ -225,7 +225,30 @@ public class CourseCreationPipelineService {
         return itemRepository.findByLessonId(lessonId);
     }
 
+    @Transactional
+    public void deleteCourse(UUID courseId) {
+        List<Unit> units = unitRepository.findByCourseIdOrderBySortOrderAsc(courseId);
+        for (Unit u : units) {
+            List<Section> sections = sectionRepository.findByUnitIdOrderBySortOrderAsc(u.getId());
+            for (Section s : sections) {
+                List<Lesson> lessons = lessonRepository.findBySectionIdOrderBySortOrderAsc(s.getId());
+                for (Lesson l : lessons) {
+                    List<Item> items = itemRepository.findByLessonId(l.getId());
+                    for (Item item : items) {
+                        itemStateRepository.deleteById(item.getId());
+                    }
+                    itemRepository.deleteAll(items);
+                }
+                lessonRepository.deleteAll(lessons);
+            }
+            sectionRepository.deleteAll(sections);
+        }
+        unitRepository.deleteAll(units);
+        courseRepository.deleteById(courseId);
+    }
+
     private void updateTask(UUID taskId, int progress, String message) {
-        taskMap.put(taskId, new TaskStatusDto(taskId, "PROCESSING", progress, message, null, null));
+        taskMap.put(taskId, "PROCESSING".equals(taskMap.get(taskId) != null ? taskMap.get(taskId).status() : "PROCESSING") ?
+                new TaskStatusDto(taskId, "PROCESSING", progress, message, null, null) : taskMap.get(taskId));
     }
 }

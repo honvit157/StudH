@@ -134,4 +134,10 @@ public class CourseController {
         }
         return ResponseEntity.ok(Map.of("message", "Đã mở khóa toàn bộ lộ trình", "unlockedCount", unlockedCount));
     }
+
+    @DeleteMapping("/courses/{id}")
+    public ResponseEntity<Map<String, String>> deleteCourse(@PathVariable UUID id) {
+        pipelineService.deleteCourse(id);
+        return ResponseEntity.ok(Map.of("message", "Đã xóa môn học thành công"));
+    }
 }

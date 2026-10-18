@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { apiRequest } from '../api/client';
-import { Lock, Check, Star, Play, Sparkles, BookOpen, Unlock, Zap, X, AlertCircle } from 'lucide-react';
+import { Lock, Check, Star, Play, Sparkles, BookOpen, Unlock, Zap, X, AlertCircle, Trash2 } from 'lucide-react';
 
 interface Lesson {
   id: string;
@@ -36,21 +36,33 @@ interface PathData {
 
 interface LearningPathPageProps {
   onStartLesson: (lessonId: string) => void;
+  courseId?: string;
+  onCourseDeleted?: () => void;
 }
 
-export default function LearningPathPage({ onStartLesson }: LearningPathPageProps) {
+export default function LearningPathPage({ onStartLesson, courseId, onCourseDeleted }: LearningPathPageProps) {
   const [pathData, setPathData] = useState<PathData | null>(null);
   const [loading, setLoading] = useState(true);
   const [unlockModalLesson, setUnlockModalLesson] = useState<Lesson | null>(null);
   const [unlocking, setUnlocking] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const loadPath = async () => {
     try {
-      const courses = await apiRequest<any[]>('/api/courses');
-      if (courses.length > 0) {
-        const res = await apiRequest<PathData>(`/api/courses/${courses[0].id}/path`);
+      setLoading(true);
+      let targetId = courseId;
+      if (!targetId) {
+        const courses = await apiRequest<any[]>('/api/courses');
+        if (courses.length > 0) {
+          targetId = courses[0].id;
+        }
+      }
+      if (targetId) {
+        const res = await apiRequest<PathData>(`/api/courses/${targetId}/path`);
         setPathData(res);
+      } else {
+        setPathData(null);
       }
     } catch (err) {
       console.error('Lỗi khi tải đường học:', err);
@@ -61,7 +73,27 @@ export default function LearningPathPage({ onStartLesson }: LearningPathPageProp
 
   useEffect(() => {
     loadPath();
-  }, []);
+  }, [courseId]);
+
+  const handleDeleteCourse = async () => {
+    if (!pathData) return;
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa môn học "${pathData.courseTitle}"? Toàn bộ lộ trình và câu hỏi sẽ bị xóa.`)) {
+      return;
+    }
+    try {
+      setDeleting(true);
+      await apiRequest(`/api/courses/${pathData.courseId}`, { method: 'DELETE' });
+      if (onCourseDeleted) {
+        onCourseDeleted();
+      } else {
+        await loadPath();
+      }
+    } catch (e: any) {
+      alert('Không thể xóa môn học: ' + (e.message || 'Lỗi mạng'));
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const handleUnlockSingle = async (lesson: Lesson) => {
     try {
@@ -135,7 +167,18 @@ export default function LearningPathPage({ onStartLesson }: LearningPathPageProp
             </span>
           </div>
 
-          <h1 className="text-xl font-black">{pathData.courseTitle}</h1>
+          <div className="flex items-center justify-between">
+            <h1 className="text-xl font-black">{pathData.courseTitle}</h1>
+            <button
+              onClick={handleDeleteCourse}
+              disabled={deleting}
+              title="Xóa môn học này"
+              className="text-xs font-bold text-emerald-100 hover:text-white hover:bg-emerald-700/60 px-2 py-1 rounded-xl transition flex items-center space-x-1 border border-emerald-400/40"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Xóa môn</span>
+            </button>
+          </div>
 
           {/* Progress bar */}
           <div className="w-full h-2.5 bg-emerald-800/40 rounded-full overflow-hidden">

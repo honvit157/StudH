@@ -92,8 +92,8 @@ public class ScheduleService {
             LocalDate assignDate = today.plusDays(currentDayOffset);
             lesson.setScheduledDate(assignDate);
 
-            // Nếu là bài học hôm nay hoặc ngày trước thì mở khóa
-            if (!assignDate.isAfter(today) && "locked".equalsIgnoreCase(lesson.getStatus())) {
+            // Chuẩn lộ trình Duolingo tuần tự: CHỈ mở khóa duy nhất bài học đầu tiên chưa hoàn thành
+            if (i == 0 && "locked".equalsIgnoreCase(lesson.getStatus())) {
                 lesson.setStatus("ready");
             }
 

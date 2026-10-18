@@ -299,6 +299,9 @@ public class SessionService {
                     if ("locked".equalsIgnoreCase(next.getStatus())) {
                         next.setStatus("ready");
                         lessonRepository.save(next);
+                        try {
+                            pipelineService.generateItemsForLesson(next.getId());
+                        } catch (Exception ignored) {}
                     }
                     break;
                 }

@@ -77,7 +77,7 @@ public class DataSeeder implements CommandLineRunner {
 
         // Lesson 2: Bảo Mật Cookie & Authentication
         Lesson lesson2 = new Lesson(sec1.getId(), 2, "Bài 2: Cookie HttpOnly & Session", "Cookie HttpOnly ngăn chặn tấn công XSS...");
-        lesson2.setStatus("ready");
+        lesson2.setStatus("locked");
         lesson2.setScheduledDate(LocalDate.now().plusDays(1));
         lessonRepository.save(lesson2);
 
@@ -92,7 +92,7 @@ public class DataSeeder implements CommandLineRunner {
 
         // Lesson 3: Nguyên Lý SM-2
         Lesson lesson3 = new Lesson(sec2.getId(), 1, "Bài 3: Thuật Toán SM-2 Rút Gọn", "SuperMemo SM-2 tính toán chu kỳ lặp...");
-        lesson3.setStatus("ready");
+        lesson3.setStatus("locked");
         lesson3.setScheduledDate(LocalDate.now().plusDays(2));
         lessonRepository.save(lesson3);
 
