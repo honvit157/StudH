@@ -6,11 +6,12 @@ import SessionPage from './pages/SessionPage';
 import LearningPathPage from './pages/LearningPathPage';
 import SchedulePage from './pages/SchedulePage';
 import StatsPage from './pages/StatsPage';
+import SettingsPage from './pages/SettingsPage';
 import CreateCourseModal from './pages/CreateCourseModal';
 import { apiRequest } from './api/client';
-import { Flame, Sparkles, BookOpen, MapPin, BarChart3, Calendar, Play, Plus, UploadCloud } from 'lucide-react';
+import { Flame, Sparkles, BookOpen, MapPin, BarChart3, Calendar, Play, Plus, UploadCloud, Settings } from 'lucide-react';
 
-type Tab = 'home' | 'path' | 'schedule' | 'stats';
+type Tab = 'home' | 'path' | 'schedule' | 'stats' | 'settings';
 
 function AppContent() {
   const { isAuthenticated, isLoading, logout } = useAuth();
@@ -103,6 +104,19 @@ function AppContent() {
             <span>{xp} XP</span>
           </div>
 
+          {/* Settings button */}
+          <button
+            onClick={() => setActiveTab('settings')}
+            className={`p-1.5 rounded-xl border transition ${
+              activeTab === 'settings'
+                ? 'bg-emerald-50 dark:bg-emerald-950/60 border-duo-green text-duo-green'
+                : 'border-slate-200 dark:border-duo-dark-border text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+            title="Cài đặt"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+
           <button
             onClick={logout}
             className="text-[11px] font-bold px-2 py-1.5 rounded-xl border border-slate-200 dark:border-duo-dark-border text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
@@ -191,6 +205,10 @@ function AppContent() {
         {activeTab === 'stats' && (
           <StatsPage />
         )}
+
+        {activeTab === 'settings' && (
+          <SettingsPage onLogout={logout} onRefreshAll={refreshData} />
+        )}
       </main>
 
       {/* Bottom Navigation Bar (Mobile-first) */}
@@ -234,6 +252,16 @@ function AppContent() {
           >
             <BarChart3 className="w-5 h-5 mb-0.5" />
             <span>Thống kê</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('settings')}
+            className={`flex flex-col items-center p-2 font-bold text-[11px] transition-colors ${
+              activeTab === 'settings' ? 'text-duo-green' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
+            }`}
+          >
+            <Settings className="w-5 h-5 mb-0.5" />
+            <span>Cài đặt</span>
           </button>
         </div>
       </nav>

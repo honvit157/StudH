@@ -29,6 +29,12 @@ public class Profile {
     @Column(nullable = false)
     private String timezone = "Asia/Ho_Chi_Minh";
 
+    @Column(nullable = false)
+    private boolean soundEnabled = true;
+
+    @Column(nullable = false)
+    private String theme = "system";
+
     public Profile() {}
 
     public Profile(String id) {
@@ -58,4 +64,10 @@ public class Profile {
 
     public String getTimezone() { return timezone; }
     public void setTimezone(String timezone) { this.timezone = timezone; }
+
+    public boolean isSoundEnabled() { return soundEnabled; }
+    public void setSoundEnabled(boolean soundEnabled) { this.soundEnabled = soundEnabled; }
+
+    public String getTheme() { return theme; }
+    public void setTheme(String theme) { this.theme = theme; }
 }

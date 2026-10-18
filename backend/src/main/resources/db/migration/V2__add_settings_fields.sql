@@ -1,0 +1,3 @@
+-- V2__add_settings_fields.sql
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS sound_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS theme VARCHAR(50) NOT NULL DEFAULT 'system';

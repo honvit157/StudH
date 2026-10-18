@@ -289,13 +289,15 @@ Khi kích hoạt sinh bài, gửi `sourceText` của Lesson tới Claude API v�
   - Xây dựng quy trình AI tạo mục lục tự động, cho phép người dùng chỉnh sửa cấu trúc lộ trình.
   - Cài đặt cơ chế sinh Item kiểu Lazy (@Async task có taskId để poll tiến độ).
   - Triển khai tính năng Bài kiểm tra đầu vào (Placement Test) để rút ngắn lộ trình cho Unit đã nắm vững.
-- **Bước 8: Cài Đặt, Sao Lưu JSON, PWA & Tinh Chỉnh Mobile**
-  - Màn hình Cài đặt, chức năng Xuất/Nhập dữ liệu dự phòng qua JSON.
-  - Cấu hình PWA (Service Worker + Manifest), kiểm thử mượt mà trên màn hình nhỏ 375px.
-  - Xử lý triệt để các trường hợp ngoại lệ, hoàn thiện tài liệu hướng dẫn vận hành `README.md`.
-- **Bước 9: (Để sau)**
-  - Viết Dockerfile production multi-stage đóng gói cả frontend và backend vào một container duy nhất.
-  - Hướng dẫn triển khai lên nền tảng đám mây (Render, Railway, Fly.io + Managed Postgres).
+- **Bước 8: Cài Đặt, Sao Lưu JSON, PWA & Tinh Chỉnh Mobile (Hoàn thành)**
+  - Màn hình Cài đặt (`SettingsPage.tsx`), tùy chỉnh thời lượng học/ngày, ngày thi, mục tiêu XP, âm thanh phản hồi và chế độ giao diện Sáng/Tối.
+  - Chức năng Xuất dữ liệu dự phòng (`GET /api/export`) và Khôi phục từ JSON (`POST /api/import`), Đặt lại dữ liệu (`POST /api/settings/reset`).
+  - Cấu hình PWA (Service Worker `sw.js` + Web App Manifest `manifest.webmanifest` + Icons 192/512), hỗ trợ cài đặt toàn màn hình trên iOS Safari và Android Chrome.
+  - Tích hợp hiệu ứng âm thanh Web Audio API & xúc giác Haptic vibration mượt mà trên mobile.
+- **Bước 9: Đóng Gói Container & Triển Khai Đám Mây 0đ (Hoàn thành)**
+  - Viết `Dockerfile` production multi-stage tối ưu đóng gói cả frontend React Vite và backend Spring Boot vào một container Temurin JRE duy nhất.
+  - Cấu hình `docker-compose.yml` cho PostgreSQL 16 và StudyApp.
+  - Hoàn thiện tài liệu hướng dẫn triển khai đám mây miễn phí 100% [DEPLOYMENT.md](file:///c:/Users/Nam3/Season1/StudyApp/DEPLOYMENT.md) (Render.com + Neon.tech Postgres + Google Gemini API).
 
 ---
 

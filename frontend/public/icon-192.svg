@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#58cc02" />
+      <stop offset="100%" stop-color="#22c55e" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#000" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+  <!-- Background rounded squircle -->
+  <rect width="192" height="192" rx="42" fill="url(#grad)" />
+  <!-- Inner circular glow -->
+  <circle cx="96" cy="96" r="68" fill="#ffffff" fill-opacity="0.12" />
+  <!-- Main emblem: Duolingo book & flame crown -->
+  <g filter="url(#shadow)" fill="#ffffff" transform="translate(36, 36)">
+    <!-- Book pages -->
+    <path d="M16 32 C 32 24, 52 24, 60 30 C 68 24, 88 24, 104 32 L 104 88 C 88 80, 68 80, 60 86 C 52 80, 32 80, 16 88 Z" fill="#ffffff" opacity="0.95" />
+    <!-- Book spine & page fold -->
+    <path d="M60 30 L 60 86" stroke="#58cc02" stroke-width="4" stroke-linecap="round"/>
+    <!-- Fire flame / brain burst on top -->
+    <path d="M60 12 C 64 20, 72 22, 68 28 C 66 31, 62 31, 60 30 C 58 31, 54 31, 52 28 C 48 22, 56 20, 60 12 Z" fill="#ff9600" />
+    <!-- Sparkle star -->
+    <polygon points="92,18 94,24 100,26 94,28 92,34 90,28 84,26 90,24" fill="#ffd900"/>
+  </g>
+</svg>

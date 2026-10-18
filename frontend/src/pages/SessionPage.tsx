@@ -5,6 +5,7 @@ import {
   RotateCcw, BookOpen, HelpCircle, Trophy, Award 
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { playSuccessSound, playFailureSound, playFanfareSound, triggerHaptic } from '../utils/sound';
 
 interface SessionItem {
   itemId: string;
@@ -100,8 +101,12 @@ export default function SessionPage({ onFinish, onExit }: SessionPageProps) {
       if (res.correct) {
         setCorrectCount(prev => prev + 1);
         setTotalXp(prev => prev + res.xpEarned);
+        playSuccessSound();
+        triggerHaptic('success');
       } else {
         setIncorrectCount(prev => prev + 1);
+        playFailureSound();
+        triggerHaptic('error');
         if (!failedItemIds.includes(currentItem.itemId)) {
           setFailedItemIds(prev => [...prev, currentItem.itemId]);
         }
@@ -148,6 +153,8 @@ export default function SessionPage({ onFinish, onExit }: SessionPageProps) {
         });
         setFinalSummary(summary);
         setCompleted(true);
+        playFanfareSound();
+        triggerHaptic('success');
         // Bắn pháo hoa ăn mừng
         confetti({
           particleCount: 100,

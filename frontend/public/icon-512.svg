@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="grad512" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#58cc02" />
+      <stop offset="100%" stop-color="#16a34a" />
+    </linearGradient>
+    <filter id="shadow512" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  <!-- Background rounded squircle -->
+  <rect width="512" height="512" rx="112" fill="url(#grad512)" />
+  <!-- Inner circular glow -->
+  <circle cx="256" cy="256" r="180" fill="#ffffff" fill-opacity="0.12" />
+  <!-- Main emblem -->
+  <g filter="url(#shadow512)" fill="#ffffff" transform="translate(96, 96)">
+    <!-- Book pages -->
+    <path d="M42 85 C 85 64, 138 64, 160 80 C 181 64, 234 64, 277 85 L 277 234 C 234 213, 181 213, 160 229 C 138 213, 85 213, 42 234 Z" fill="#ffffff" opacity="0.95" />
+    <!-- Book spine -->
+    <path d="M160 80 L 160 229" stroke="#58cc02" stroke-width="10" stroke-linecap="round"/>
+    <!-- Fire flame on top -->
+    <path d="M160 32 C 170 53, 192 58, 181 74 C 176 82, 165 82, 160 80 C 155 82, 144 82, 139 74 C 128 58, 150 53, 160 32 Z" fill="#ff9600" />
+    <!-- Sparkle star -->
+    <polygon points="245,48 250,64 266,69 250,74 245,90 240,74 224,69 240,64" fill="#ffd900"/>
+  </g>
+</svg>
