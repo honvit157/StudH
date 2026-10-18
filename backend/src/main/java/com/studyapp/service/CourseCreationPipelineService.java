@@ -66,47 +66,12 @@ public class CourseCreationPipelineService {
 
     @Async
     public void processCourseCreation(UUID taskId,
-                                      List<MultipartFile> files,
-                                      String rawTextInput,
+                                      String fullText,
                                       String title,
                                       LocalDate examDate,
                                       int dailyMinutes) {
         try {
-            updateTask(taskId, 20, "Đang trích xuất nội dung văn bản từ các tài liệu...");
-
-            StringBuilder fullTextBuilder = new StringBuilder();
-
-            if (files != null && !files.isEmpty()) {
-                int fileIdx = 1;
-                for (MultipartFile file : files) {
-                    if (file != null && !file.isEmpty()) {
-                        var extracted = documentExtractionService.extract(file);
-                        String t = extracted.text();
-                        if (t != null && !t.isBlank()) {
-                            if (fullTextBuilder.length() > 0) {
-                                fullTextBuilder.append("\n\n");
-                            }
-                            fullTextBuilder.append("=== TÀI LIỆU ").append(fileIdx++).append(": ")
-                                    .append(file.getOriginalFilename()).append(" ===\n")
-                                    .append(t.trim());
-                        }
-                    }
-                }
-            }
-
-            if (rawTextInput != null && !rawTextInput.isBlank()) {
-                if (fullTextBuilder.length() > 0) {
-                    fullTextBuilder.append("\n\n=== NỘI DUNG VĂN BẢN BỔ SUNG ===\n");
-                }
-                fullTextBuilder.append(rawTextInput.trim());
-            }
-
-            String fullText = fullTextBuilder.toString().trim();
-            if (fullText.isBlank()) {
-                throw new IllegalArgumentException("Vui lòng tải lên ít nhất một file hoặc nhập văn bản trực tiếp.");
-            }
-
-            updateTask(taskId, 45, "AI đang phân tích tài liệu và cấu trúc mục lục...");
+            updateTask(taskId, 35, "AI đang phân tích tài liệu và cấu trúc mục lục...");
 
             String courseTitle = (title != null && !title.isBlank()) ? title : "Khóa học tài liệu mới";
             Course course = new Course(courseTitle, examDate, dailyMinutes);

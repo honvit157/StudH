@@ -155,6 +155,9 @@ export default function CreateCourseModal({ isOpen, onClose, onSuccess }: Create
           if (taskRes.status === 'COMPLETED') {
             clearInterval(interval);
             setProgress(100);
+            if (taskRes.courseId) {
+              localStorage.setItem('studyapp_active_course_id', taskRes.courseId);
+            }
             setTimeout(() => {
               setLoading(false);
               onSuccess();

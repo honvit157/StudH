@@ -32,19 +32,22 @@ public class CourseController {
     private final LessonRepository lessonRepository;
     private final ScheduleService scheduleService;
     private final CourseCreationPipelineService pipelineService;
+    private final com.studyapp.service.DocumentExtractionService documentExtractionService;
 
     public CourseController(CourseRepository courseRepository,
                             UnitRepository unitRepository,
                             SectionRepository sectionRepository,
                             LessonRepository lessonRepository,
                             ScheduleService scheduleService,
-                            CourseCreationPipelineService pipelineService) {
+                            CourseCreationPipelineService pipelineService,
+                            com.studyapp.service.DocumentExtractionService documentExtractionService) {
         this.courseRepository = courseRepository;
         this.unitRepository = unitRepository;
         this.sectionRepository = sectionRepository;
         this.lessonRepository = lessonRepository;
         this.scheduleService = scheduleService;
         this.pipelineService = pipelineService;
+        this.documentExtractionService = documentExtractionService;
     }
 
     @GetMapping("/courses")
@@ -68,8 +71,38 @@ public class CourseController {
         if (file != null && !allFiles.contains(file)) {
             allFiles.add(file);
         }
+
+        StringBuilder fullTextBuilder = new StringBuilder();
+        int fileIdx = 1;
+        for (MultipartFile f : allFiles) {
+            if (f != null && !f.isEmpty()) {
+                try {
+                    var extracted = documentExtractionService.extract(f);
+                    String t = extracted.text();
+                    if (t != null && !t.isBlank()) {
+                        if (fullTextBuilder.length() > 0) fullTextBuilder.append("\n\n");
+                        fullTextBuilder.append("=== TÀI LIỆU ").append(fileIdx++).append(": ")
+                                .append(f.getOriginalFilename()).append(" ===\n")
+                                .append(t.trim());
+                    }
+                } catch (Exception e) {
+                    System.err.println("Lỗi đọc file " + f.getOriginalFilename() + ": " + e.getMessage());
+                }
+            }
+        }
+
+        if (rawText != null && !rawText.isBlank()) {
+            if (fullTextBuilder.length() > 0) fullTextBuilder.append("\n\n=== NỘI DUNG VĂN BẢN BỔ SUNG ===\n");
+            fullTextBuilder.append(rawText.trim());
+        }
+
+        String fullText = fullTextBuilder.toString().trim();
+        if (fullText.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Vui lòng chọn ít nhất một file hợp lệ hoặc nhập nội dung."));
+        }
+
         UUID taskId = pipelineService.initTask();
-        pipelineService.processCourseCreation(taskId, allFiles, rawText, title, examDate, dailyMinutes);
+        pipelineService.processCourseCreation(taskId, fullText, title, examDate, dailyMinutes);
         return ResponseEntity.ok(Map.of("taskId", taskId));
     }
 
