@@ -9,5 +9,10 @@ public record FinishSessionRequest(
         int incorrectCount,
         int totalXpEarned,
         boolean isPerfect,
-        List<UUID> failedItemIds
-) {}
+        List<UUID> failedItemIds,
+        UUID lessonId
+) {
+    public FinishSessionRequest(int totalQuestions, int correctCount, int incorrectCount, int totalXpEarned, boolean isPerfect, List<UUID> failedItemIds) {
+        this(totalQuestions, correctCount, incorrectCount, totalXpEarned, isPerfect, failedItemIds, null);
+    }
+}

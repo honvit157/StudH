@@ -54,4 +54,13 @@ public class SettingsDto {
 
     public String getActiveCourseTitle() { return activeCourseTitle; }
     public void setActiveCourseTitle(String activeCourseTitle) { this.activeCourseTitle = activeCourseTitle; }
+
+    private String geminiApiKey;
+    private boolean hasGeminiKey;
+
+    public String getGeminiApiKey() { return geminiApiKey; }
+    public void setGeminiApiKey(String geminiApiKey) { this.geminiApiKey = geminiApiKey; }
+
+    public boolean isHasGeminiKey() { return hasGeminiKey; }
+    public void setHasGeminiKey(boolean hasGeminiKey) { this.hasGeminiKey = hasGeminiKey; }
 }

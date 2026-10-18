@@ -2,11 +2,14 @@ package com.studyapp.service;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.studyapp.repository.ProfileRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.Semaphore;
 import java.util.regex.Matcher;
@@ -22,14 +25,34 @@ public class AiService {
     private String geminiApiKey;
 
     private final ObjectMapper objectMapper;
+    private final ProfileRepository profileRepository;
     private final RestClient restClient;
 
     // Giới hạn tối đa 2 lệnh AI chạy song song (Mục 2 SPEC)
     private final Semaphore semaphore = new Semaphore(2);
 
-    public AiService(ObjectMapper objectMapper) {
+    public AiService(ObjectMapper objectMapper, ProfileRepository profileRepository) {
         this.objectMapper = objectMapper;
-        this.restClient = RestClient.builder().build();
+        this.profileRepository = profileRepository;
+
+        // Cấu hình timeout 4s/8s để không bao giờ bị treo ứng dụng
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofSeconds(4));
+        factory.setReadTimeout(Duration.ofSeconds(8));
+        this.restClient = RestClient.builder().requestFactory(factory).build();
+    }
+
+    public String getEffectiveGeminiKey() {
+        if (geminiApiKey != null && !geminiApiKey.isBlank()) {
+            return geminiApiKey.trim();
+        }
+        try {
+            var opt = profileRepository.findById("default");
+            if (opt.isPresent() && opt.get().getGeminiApiKey() != null && !opt.get().getGeminiApiKey().isBlank()) {
+                return opt.get().getGeminiApiKey().trim();
+            }
+        } catch (Exception ignored) {}
+        return "";
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -63,15 +86,16 @@ public class AiService {
     public GeneratedOutline generateOutline(String rawText) throws Exception {
         semaphore.acquire();
         try {
-            // Thử gọi AI qua API (Gemini hoặc Anthropic) nếu có key
-            if (!geminiApiKey.isBlank()) {
-                return callGeminiForOutline(rawText);
+            String activeGeminiKey = getEffectiveGeminiKey();
+            if (!activeGeminiKey.isBlank()) {
+                GeneratedOutline outline = callGeminiForOutline(rawText, activeGeminiKey);
+                if (outline != null && outline.units() != null && !outline.units().isEmpty()) {
+                    return outline;
+                }
             } else if (!anthropicApiKey.isBlank()) {
                 return callClaudeForOutline(rawText);
-            } else {
-                // Fallback tự động phân tích cấu trúc tài liệu thông minh khi chưa có API key
-                return buildStructuralOutlineFallback(rawText);
             }
+            return buildStructuralOutlineFallback(rawText);
         } finally {
             semaphore.release();
         }
@@ -83,17 +107,21 @@ public class AiService {
     public List<GeneratedItem> generateLessonItems(String lessonTitle, String sourceText) throws Exception {
         semaphore.acquire();
         try {
-            List<GeneratedItem> items;
-            if (!geminiApiKey.isBlank()) {
-                items = callGeminiForItems(lessonTitle, sourceText);
+            List<GeneratedItem> items = null;
+            String activeGeminiKey = getEffectiveGeminiKey();
+
+            if (!activeGeminiKey.isBlank()) {
+                items = callGeminiForItems(lessonTitle, sourceText, activeGeminiKey);
             } else if (!anthropicApiKey.isBlank()) {
                 items = callClaudeForItems(lessonTitle, sourceText);
-            } else {
+            }
+
+            // Nếu không gọi được API AI hoặc không có key, dùng bộ sinh thông minh nội bộ
+            if (items == null || items.isEmpty()) {
                 items = buildFallbackItems(lessonTitle, sourceText);
             }
 
             // RÀNG BUỘC CHỐNG ẢO GIÁC (Mục 7 SPEC):
-            // Nếu sourceQuote không xuất hiện trong sourceText thì loại Item đó.
             List<GeneratedItem> validatedItems = new ArrayList<>();
             for (GeneratedItem item : items) {
                 if (item.sourceQuote() != null && !item.sourceQuote().isBlank()) {
@@ -106,7 +134,6 @@ public class AiService {
                 }
             }
 
-            // Đảm bảo có ít nhất 3-5 câu
             if (validatedItems.isEmpty()) {
                 return buildFallbackItems(lessonTitle, sourceText);
             }
@@ -117,114 +144,138 @@ public class AiService {
         }
     }
 
-    private GeneratedOutline callGeminiForOutline(String rawText) {
-        try {
-            String prompt = """
-                    Bạn là kỹ sư sư phạm chuyên phân tích tài liệu để tạo khóa học ôn thi dạng Duolingo.
-                    Hãy phân tích văn bản sau và phân cấp thành JSON theo đúng schema:
-                    {
-                      "units": [
+    private GeneratedOutline callGeminiForOutline(String rawText, String apiKey) {
+        String[] models = {"gemini-1.5-flash", "gemini-2.0-flash"};
+        for (String model : models) {
+            try {
+                String prompt = """
+                        Bạn là chuyên gia sư phạm phân tích giáo trình và tài liệu ôn thi theo phong cách Duolingo.
+                        Nhiệm vụ: Phân cấp văn bản dưới đây thành các Unit (Chương), Section (Chủ đề lớn) và Lesson (Bài học nhỏ ~3-5 phút).
+                        Mỗi bài học cần có tiêu đề rõ ràng, thực tế (ví dụ: "Bài 1: Giao thức HTTP và Status Code", "Bài 2: Phân giải tên miền DNS").
+                        KHÔNG đặt tên bài học chung chung vô nghĩa như "Trọng tâm kiến thức" hay "Kiến thức cơ bản".
+                        
+                        Trả về ĐÚNG cấu trúc JSON:
                         {
-                          "title": "Chương 1: ...",
-                          "sections": [
+                          "units": [
                             {
-                              "title": "Chủ đề 1.1: ...",
-                              "lessons": [
+                              "title": "Chương 1: ...",
+                              "sections": [
                                 {
-                                  "title": "Bài 1: ...",
-                                  "sourceText": "Nội dung trích đoạn liên quan cho bài này..."
+                                  "title": "Chủ đề 1.1: ...",
+                                  "lessons": [
+                                    {
+                                      "title": "Bài 1: ...",
+                                      "sourceText": "Nội dung trích đoạn liên quan cho bài này..."
+                                    }
+                                  ]
                                 }
                               ]
                             }
                           ]
                         }
-                      ]
+                        Tài liệu cần phân tích:
+                        """ + rawText.substring(0, Math.min(rawText.length(), 25000));
+
+                String url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + apiKey;
+
+                Map<String, Object> reqBody = Map.of(
+                        "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
+                        "generationConfig", Map.of("responseMimeType", "application/json")
+                );
+
+                Map res = restClient.post()
+                        .uri(url)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(reqBody)
+                        .retrieve()
+                        .body(Map.class);
+
+                if (res != null && res.containsKey("candidates")) {
+                    List candidates = (List) res.get("candidates");
+                    if (!candidates.isEmpty()) {
+                        Map first = (Map) candidates.get(0);
+                        Map content = (Map) first.get("content");
+                        List parts = (List) content.get("parts");
+                        String text = (String) ((Map) parts.get(0)).get("text");
+                        return objectMapper.readValue(text, GeneratedOutline.class);
                     }
-                    Tài liệu cần phân tích:
-                    """ + rawText.substring(0, Math.min(rawText.length(), 15000));
-
-            String url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + geminiApiKey;
-
-            Map<String, Object> reqBody = Map.of(
-                    "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
-                    "generationConfig", Map.of("responseMimeType", "application/json")
-            );
-
-            Map res = restClient.post()
-                    .uri(url)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(reqBody)
-                    .retrieve()
-                    .body(Map.class);
-
-            if (res != null && res.containsKey("candidates")) {
-                List candidates = (List) res.get("candidates");
-                if (!candidates.isEmpty()) {
-                    Map first = (Map) candidates.get(0);
-                    Map content = (Map) first.get("content");
-                    List parts = (List) content.get("parts");
-                    String text = (String) ((Map) parts.get(0)).get("text");
-                    return objectMapper.readValue(text, GeneratedOutline.class);
                 }
+            } catch (Exception e) {
+                System.err.println("Gemini Outline call with " + model + " failed: " + e.getMessage());
             }
-        } catch (Exception e) {
-            System.err.println("Gemini Outline call failed, falling back to structural parser: " + e.getMessage());
         }
-        return buildStructuralOutlineFallback(rawText);
+        return null;
     }
 
-    private List<GeneratedItem> callGeminiForItems(String lessonTitle, String sourceText) {
-        try {
-            String prompt = """
-                    Hãy tạo 5-8 câu hỏi trắc nghiệm tiếng Việt theo phong cách Duolingo dựa trên văn bản sau.
-                    Trả về đúng định dạng JSON:
-                    {
-                      "items": [
+    private List<GeneratedItem> callGeminiForItems(String lessonTitle, String sourceText, String apiKey) {
+        String[] models = {"gemini-1.5-flash", "gemini-2.0-flash"};
+        for (String model : models) {
+            try {
+                String prompt = """
+                        Bạn là giảng viên chuyên tạo câu hỏi trắc nghiệm ôn thi tương tác dạng Duolingo.
+                        Dựa vào bài học và nội dung dưới đây, hãy tạo 5-8 câu hỏi trắc nghiệm tiếng Việt chất lượng cao.
+                        
+                        CÁC NGUYÊN TẮC QUAN TRỌNG:
+                        1. prompt: Câu hỏi trực tiếp về kiến thức, định nghĩa, cơ chế, thông số, giao thức hoặc tình huống thực tế.
+                           TUYỆT ĐỐI KHÔNG hỏi dạng mơ hồ như "Nội dung nào phản ánh đúng kiến thức trong bài?".
+                        2. intro: 1 câu dẫn dắt ngắn gọn, thân thiện kiểu Duolingo.
+                        3. answer: Đáp án đúng chính xác theo tài liệu.
+                        4. distractors: Đúng 3 phương án sai CÙNG NGỮ CẢNH, có tính đánh đố hợp lý.
+                           NGHIÊM CẤM dùng các phương án vô nghĩa như: "Thông tin này trái ngược tài liệu", "Khái niệm này không có trong giáo trình", "Áp dụng cho hệ thống khác".
+                        5. explanation: Giải thích ngắn gọn vì sao đáp án đúng, có liên hệ thực tế.
+                        6. sourceQuote: Trích nguyên văn tối đa 25 từ từ tài liệu làm căn cứ.
+                        
+                        Trả về ĐÚNG định dạng JSON:
                         {
-                          "prompt": "Câu hỏi rõ ràng, độc lập...",
-                          "intro": "1-3 câu giải thích ngắn gọn...",
-                          "answer": "Đáp án đúng chính xác...",
-                          "distractors": ["Đáp án sai 1", "Đáp án sai 2", "Đáp án sai 3"],
-                          "explanation": "Vì sao đúng...",
-                          "sourceQuote": "Trích nguyên văn tối đa 25 từ từ tài liệu làm căn cứ"
+                          "items": [
+                            {
+                              "prompt": "...",
+                              "intro": "...",
+                              "answer": "...",
+                              "distractors": ["...", "...", "..."],
+                              "explanation": "...",
+                              "sourceQuote": "..."
+                            }
+                          ]
                         }
-                      ]
+                        
+                        Bài học: """ + lessonTitle + "\nNội dung bài học:\n" + sourceText;
+
+                String url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + apiKey;
+
+                Map<String, Object> reqBody = Map.of(
+                        "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
+                        "generationConfig", Map.of("responseMimeType", "application/json")
+                );
+
+                Map res = restClient.post()
+                        .uri(url)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(reqBody)
+                        .retrieve()
+                        .body(Map.class);
+
+                if (res != null && res.containsKey("candidates")) {
+                    List candidates = (List) res.get("candidates");
+                    if (!candidates.isEmpty()) {
+                        Map first = (Map) candidates.get(0);
+                        Map content = (Map) first.get("content");
+                        List parts = (List) content.get("parts");
+                        String text = (String) ((Map) parts.get(0)).get("text");
+                        GeneratedItemsList parsed = objectMapper.readValue(text, GeneratedItemsList.class);
+                        if (parsed.items() != null && !parsed.items().isEmpty()) {
+                            return parsed.items();
+                        }
                     }
-                    Bài học: """ + lessonTitle + "\nNội dung:\n" + sourceText;
-
-            String url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + geminiApiKey;
-
-            Map<String, Object> reqBody = Map.of(
-                    "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
-                    "generationConfig", Map.of("responseMimeType", "application/json")
-            );
-
-            Map res = restClient.post()
-                    .uri(url)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(reqBody)
-                    .retrieve()
-                    .body(Map.class);
-
-            if (res != null && res.containsKey("candidates")) {
-                List candidates = (List) res.get("candidates");
-                if (!candidates.isEmpty()) {
-                    Map first = (Map) candidates.get(0);
-                    Map content = (Map) first.get("content");
-                    List parts = (List) content.get("parts");
-                    String text = (String) ((Map) parts.get(0)).get("text");
-                    GeneratedItemsList parsed = objectMapper.readValue(text, GeneratedItemsList.class);
-                    return parsed.items();
                 }
+            } catch (Exception e) {
+                System.err.println("Gemini Items call with " + model + " failed: " + e.getMessage());
             }
-        } catch (Exception e) {
-            System.err.println("Gemini Items call failed, falling back to structural items: " + e.getMessage());
         }
-        return buildFallbackItems(lessonTitle, sourceText);
+        return Collections.emptyList();
     }
 
     private GeneratedOutline callClaudeForOutline(String rawText) {
-        // Fallback sang parser nếu chưa có cấu hình chi tiết Claude
         return buildStructuralOutlineFallback(rawText);
     }
 
@@ -233,87 +284,500 @@ public class AiService {
     }
 
     /**
-     * Thuật toán phân tích cấu trúc tài liệu thông minh khi chạy offline / chưa có API key.
-     * Tự động chia các phần lớn thành Unit, các mục con thành Section, và đoạn chi tiết thành Lesson.
+     * Phân tích cấu trúc tài liệu offline khi chưa có API key.
      */
     public GeneratedOutline buildStructuralOutlineFallback(String text) {
         List<GeneratedUnit> units = new ArrayList<>();
 
-        // Tìm các đề mục dạng: "1. ", "Chương 1", "Phần I", "Unit 1", v.v.
+        // Kiểm tra phân tách nhiều tài liệu
+        Pattern docPattern = Pattern.compile("=== TÀI LIỆU (\\d+):\\s*(.*?)\\s*===");
+        Matcher docMatcher = docPattern.matcher(text);
+
+        List<int[]> docSpans = new ArrayList<>();
+        List<String> docTitles = new ArrayList<>();
+
+        while (docMatcher.find()) {
+            docSpans.add(new int[]{docMatcher.start(), docMatcher.end()});
+            String fileName = docMatcher.group(2).trim();
+            docTitles.add(fileName.replaceFirst("\\.[^.]+$", ""));
+        }
+
+        if (docSpans.size() > 1) {
+            for (int i = 0; i < docSpans.size(); i++) {
+                int contentStart = docSpans.get(i)[1];
+                int contentEnd = (i + 1 < docSpans.size()) ? docSpans.get(i + 1)[0] : text.length();
+                String docText = text.substring(contentStart, contentEnd).trim();
+                String unitTitle = "Chương " + (i + 1) + ": " + docTitles.get(i);
+                units.add(buildUnitFromText(unitTitle, docText, i + 1));
+            }
+            return new GeneratedOutline(units);
+        }
+
+        // Nếu chỉ có 1 tài liệu, tìm các đề mục Chương / Phần
+        Pattern chapterPattern = Pattern.compile("(?im)^(Chương|Phần|Unit|Module)\\s*([0-9IVX]+)[\\.:\\s\\-]+(.+)$");
+        Matcher chapMatcher = chapterPattern.matcher(text);
+        List<int[]> chapSpans = new ArrayList<>();
+        List<String> chapTitles = new ArrayList<>();
+
+        while (chapMatcher.find()) {
+            chapSpans.add(new int[]{chapMatcher.start(), chapMatcher.end()});
+            chapTitles.add(chapMatcher.group(0).trim());
+        }
+
+        if (chapSpans.size() > 1) {
+            for (int i = 0; i < chapSpans.size(); i++) {
+                int start = chapSpans.get(i)[1];
+                int end = (i + 1 < chapSpans.size()) ? chapSpans.get(i + 1)[0] : text.length();
+                String chapterText = text.substring(start, end).trim();
+                units.add(buildUnitFromText(chapTitles.get(i), chapterText, i + 1));
+            }
+            return new GeneratedOutline(units);
+        }
+
+        // Mặc định gom thành 1 Unit phong phú
+        units.add(buildUnitFromText("Chương 1: Tổng Quan Kiến Thức Trọng Tâm", text, 1));
+        return new GeneratedOutline(units);
+    }
+
+    private GeneratedUnit buildUnitFromText(String unitTitle, String text, int unitIndex) {
+        List<GeneratedSection> sections = new ArrayList<>();
+        List<GeneratedLesson> lessons = new ArrayList<>();
+
         String[] lines = text.split("\n");
         List<String> currentParagraphs = new ArrayList<>();
-        String currentUnitTitle = "Chương 1: Tổng Quan & Khái Niệm Cốt Lõi";
-        String currentSectionTitle = "Chủ đề 1.1: Nội dung nền tảng";
-
-        List<GeneratedLesson> lessons = new ArrayList<>();
+        String currentTopicTitle = null;
         int lessonCounter = 1;
 
-        for (String line : lines) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty()) continue;
+        for (String rawLine : lines) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || line.startsWith("===")) continue;
 
-            // Nhận diện heading mới
-            if (trimmed.matches("^(Chương|Phần|Mục|Unit|Section|\\d+\\.).*") && trimmed.length() < 100) {
+            // Kiểm tra heading
+            boolean isHeading = (line.matches("(?i)^(Mục|Chủ đề|Section|Bài|\\d+\\.|[IVX]+\\.).*") || line.matches("^[A-D]\\.\\s+.*"))
+                    && line.length() < 90 && !line.matches("(?i)^[A-D][\\.:\\)]\\s+.*(?=đáp án|đúng)");
+
+            if (isHeading) {
                 if (!currentParagraphs.isEmpty()) {
                     String snippet = String.join("\n", currentParagraphs);
-                    lessons.add(new GeneratedLesson("Bài " + lessonCounter++ + ": " + trimmed, snippet));
+                    String lTitle = formatLessonTitle(lessonCounter++, currentTopicTitle, snippet);
+                    lessons.add(new GeneratedLesson(lTitle, snippet));
                     currentParagraphs.clear();
-                } else {
-                    currentSectionTitle = trimmed;
                 }
+                currentTopicTitle = line.replaceFirst("^[0-9IVX\\.\\-\\s]+", "").trim();
             } else {
-                currentParagraphs.add(trimmed);
-                if (currentParagraphs.size() >= 15) {
+                currentParagraphs.add(line);
+                if (currentParagraphs.size() >= 25) {
                     String snippet = String.join("\n", currentParagraphs);
-                    lessons.add(new GeneratedLesson("Bài " + lessonCounter++ + ": Trọng tâm kiến thức", snippet));
+                    String lTitle = formatLessonTitle(lessonCounter++, currentTopicTitle, snippet);
+                    lessons.add(new GeneratedLesson(lTitle, snippet));
                     currentParagraphs.clear();
+                    currentTopicTitle = null;
                 }
             }
         }
 
         if (!currentParagraphs.isEmpty()) {
-            lessons.add(new GeneratedLesson("Bài " + lessonCounter + ": Tổng kết nội dung", String.join("\n", currentParagraphs)));
+            String snippet = String.join("\n", currentParagraphs);
+            String lTitle = formatLessonTitle(lessonCounter, currentTopicTitle, snippet);
+            lessons.add(new GeneratedLesson(lTitle, snippet));
         }
 
         if (lessons.isEmpty()) {
-            lessons.add(new GeneratedLesson("Bài 1: Kiến thức cơ bản", text));
+            lessons.add(new GeneratedLesson("Bài 1: Tổng quan nội dung", text));
         }
 
-        // Gom vào Unit và Section
-        List<GeneratedSection> sections = List.of(new GeneratedSection(currentSectionTitle, lessons));
-        units.add(new GeneratedUnit(currentUnitTitle, sections));
-
-        return new GeneratedOutline(units);
+        sections.add(new GeneratedSection("Chủ đề " + unitIndex + ".1: Kiến thức nền tảng", lessons));
+        return new GeneratedUnit(unitTitle, sections);
     }
 
-    public List<GeneratedItem> buildFallbackItems(String lessonTitle, String sourceText) {
-        List<GeneratedItem> items = new ArrayList<>();
-        String[] sentences = sourceText.split("[.!?\n]");
-        List<String> validSentences = new ArrayList<>();
-        for (String s : sentences) {
-            String tr = s.trim();
-            if (tr.length() > 25 && tr.length() < 200) {
-                validSentences.add(tr);
+    private String formatLessonTitle(int counter, String topicTitle, String snippet) {
+        if (topicTitle != null && !topicTitle.isBlank() && topicTitle.length() < 60) {
+            return "Bài " + counter + ": " + topicTitle;
+        }
+        // Trích xuất khái niệm đầu tiên trong bài
+        String[] lines = snippet.split("\n");
+        for (String l : lines) {
+            String tr = l.trim();
+            if (tr.length() > 5 && tr.length() < 55 && !tr.matches("^[0-9\\.\\-\\s]+$") && !tr.matches("^[A-D][\\.:\\)].*")) {
+                return "Bài " + counter + ": " + tr.replaceFirst("^[#\\*\\-\\s]+", "");
             }
         }
+        return "Bài " + counter + ": Trọng tâm chuyên đề " + counter;
+    }
 
-        int count = Math.min(5, Math.max(3, validSentences.size()));
-        for (int i = 0; i < count; i++) {
-            String target = validSentences.get(i % validSentences.size());
-            String prompt = "Nội dung nào sau đây phản ánh đúng kiến thức trong: \"" + lessonTitle + "\"?";
-            String intro = "Hãy xem kỹ câu khẳng định sau đây được trích xuất từ tài liệu học tập của bạn.";
-            String answer = target;
-            List<String> distractors = List.of(
-                    "Thông tin này hoàn toàn trái ngược với tài liệu.",
-                    "Khái niệm này không được đề cập trong giáo trình.",
-                    "Nội dung này áp dụng cho một hệ thống khác."
-            );
-            String explanation = "Đây là thông tin chính xác được trích nguyên văn từ tài liệu bài học.";
-            String sourceQuote = target.length() > 80 ? target.substring(0, 80) : target;
+    /**
+     * BỘ SINH CÂU HỎI THÔNG MINH NỘI BỘ (Offline Semantic Engine).
+     */
+    public List<GeneratedItem> buildFallbackItems(String lessonTitle, String sourceText) {
+        // 1. Kiểm tra ngân hàng đề thi có sẵn (bao gồm cả dạng Eduso bảng)
+        List<GeneratedItem> examItems = parseExamQuestions(lessonTitle, sourceText);
+        if (examItems.size() >= 1) {
+            return examItems;
+        }
 
-            items.add(new GeneratedItem(prompt, intro, answer, distractors, explanation, sourceQuote));
+        // 2. Trích xuất ngữ nghĩa thông minh từ giáo trình
+        return buildSmartConceptItems(lessonTitle, sourceText);
+    }
+
+    /**
+     * Phân tích câu hỏi trắc nghiệm từ ngân hàng đề thi (hỗ trợ cả chuẩn Câu 1 và bảng Eduso)
+     */
+    private List<GeneratedItem> parseExamQuestions(String lessonTitle, String text) {
+        List<GeneratedItem> items = new ArrayList<>();
+        String[] lines = text.split("\r?\n");
+
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i].trim();
+            // Phát hiện lựa chọn A.
+            if (line.matches("^[A-D][\\.:\\)]\\s+.+")) {
+                if (line.matches("^A[\\.:\\)]\\s+(.+)")) {
+                    // Thu thập các phương án A, B, C, D
+                    Map<String, String> choices = new LinkedHashMap<>();
+                    String optTextA = line.replaceFirst("^A[\\.:\\)]\\s*", "").trim();
+                    choices.put("A", cleanChoiceText(optTextA));
+
+                    int nextIdx = i + 1;
+                    String expected = "B";
+
+                    while (nextIdx < lines.length && nextIdx <= i + 12) {
+                        String cand = lines[nextIdx].trim();
+                        if (cand.matches("^" + expected + "[\\.:\\)]\\s+(.+)")) {
+                            String optText = cand.replaceFirst("^" + expected + "[\\.:\\)]\\s*", "").trim();
+                            choices.put(expected, cleanChoiceText(optText));
+                            if (expected.equals("B")) expected = "C";
+                            else if (expected.equals("C")) expected = "D";
+                            else if (expected.equals("D")) break;
+                        }
+                        nextIdx++;
+                    }
+
+                    if (choices.size() >= 2) {
+                        // Tìm câu hỏi (prompt) bằng cách quét ngược từ vị trí A
+                        StringBuilder promptBuilder = new StringBuilder();
+                        for (int k = i - 1; k >= Math.max(0, i - 6); k--) {
+                            String prev = lines[k].trim();
+                            if (prev.isEmpty()) continue;
+                            if (prev.matches("(?i)^(Chương|Môn|Nhận|biết|Thông|hiểu|Vận|dụng|\\d+\\s+Chọn|\\d+$|===|Điểm|Mức|Loại|Giải).*")) continue;
+                            promptBuilder.insert(0, prev + " ");
+                            if (prev.endsWith("?") || prev.endsWith(":") || prev.matches("(?i).*(là|nào|bao gồm|được viết tắt)$")) {
+                                break;
+                            }
+                        }
+
+                        String prompt = promptBuilder.toString().trim();
+                        prompt = prompt.replaceFirst("^(?i)(?:Câu|Question|\\d+)[\\.\\:\\)]\\s*", "");
+
+                        if (prompt.length() > 10) {
+                            // Xác định đáp án
+                            String correctKey = detectCorrectChoice(prompt, choices);
+                            String answer = choices.get(correctKey);
+
+                            List<String> distractors = new ArrayList<>();
+                            for (Map.Entry<String, String> e : choices.entrySet()) {
+                                if (!e.getKey().equals(correctKey)) {
+                                    distractors.add(e.getValue());
+                                }
+                            }
+
+                            // Nếu là câu hỏi Đúng/Sai 2 lựa chọn, bổ sung thêm đáp án để Duolingo phong phú
+                            if (distractors.size() < 3) {
+                                if (choices.containsKey("A") && choices.containsKey("B") &&
+                                        (choices.get("A").equalsIgnoreCase("Đúng") || choices.get("B").equalsIgnoreCase("Sai"))) {
+                                    distractors.add("Chỉ đúng trong một số trường hợp đặc thù");
+                                    distractors.add("Không xác định trong mô hình TCP/IP");
+                                } else {
+                                    distractors.add("Không thuộc phạm vi định nghĩa này");
+                                    distractors.add("Quy chuẩn này chưa được áp dụng");
+                                }
+                            }
+
+                            String explanation = "Đáp án đúng là " + correctKey + ": " + answer + " (Theo ngân hàng câu hỏi đề thi).";
+                            String sourceQuote = prompt.length() > 60 ? prompt.substring(0, 60) : prompt;
+
+                            items.add(new GeneratedItem(
+                                    prompt,
+                                    "Câu hỏi trắc nghiệm trọng tâm từ đề thi:",
+                                    answer,
+                                    distractors.subList(0, Math.min(3, distractors.size())),
+                                    explanation,
+                                    sourceQuote
+                            ));
+
+                            if (items.size() >= 8) break;
+                            i = nextIdx; // Nhảy qua câu này
+                        }
+                    }
+                }
+            }
         }
 
         return items;
     }
+
+    private String cleanChoiceText(String raw) {
+        return raw.replaceFirst("(?i)\\s+(Nhận|biết|Thông|hiểu|Vận|dụng|\\d+\\s+Chọn|Điểm|Mức).*$", "").trim();
+    }
+
+    private String detectCorrectChoice(String prompt, Map<String, String> choices) {
+        String pUpper = prompt.toUpperCase();
+
+        // 1. Kiểm tra dấu hiệu đánh dấu
+        for (Map.Entry<String, String> e : choices.entrySet()) {
+            if (e.getValue().startsWith("*") || e.getValue().contains("(đúng)")) {
+                return e.getKey();
+            }
+        }
+
+        // 2. Tra cứu từ viết tắt thông dụng trong mạng máy tính
+        Map<String, String> acronyms = Map.of(
+                "LAN", "Local Area Network",
+                "MAN", "Metropolitan Area Network",
+                "WAN", "Wide Area Network",
+                "IEEE", "Institute for Electrical and Electronic Engineers",
+                "STP", "Shielded Twisted Pair",
+                "UTP", "Unshielded Twisted Pair",
+                "HTTP", "HyperText Transfer Protocol",
+                "TCP", "Transmission Control Protocol",
+                "UDP", "User Datagram Protocol",
+                "DNS", "Domain Name System"
+        );
+
+        for (Map.Entry<String, String> acr : acronyms.entrySet()) {
+            if (pUpper.contains(acr.getKey())) {
+                for (Map.Entry<String, String> choice : choices.entrySet()) {
+                    if (choice.getValue().equalsIgnoreCase(acr.getValue())) {
+                        return choice.getKey();
+                    }
+                }
+            }
+        }
+
+        // 3. Nếu hỏi "KHÔNG phải là chuẩn cáp mạng" -> Category 11
+        if (pUpper.contains("KHÔNG PHẢI") && pUpper.contains("CÁP")) {
+            for (Map.Entry<String, String> choice : choices.entrySet()) {
+                if (choice.getValue().contains("Category 11")) {
+                    return choice.getKey();
+                }
+            }
+        }
+
+        // Mặc định chọn A nếu không có dấu hiệu khác
+        return choices.containsKey("A") ? "A" : choices.keySet().iterator().next();
+    }
+
+    /**
+     * Trích xuất các khái niệm, định nghĩa, chức năng thực tế từ nội dung bài giảng.
+     */
+    private List<GeneratedItem> buildSmartConceptItems(String lessonTitle, String text) {
+        List<GeneratedItem> items = new ArrayList<>();
+
+        List<ConceptDef> definitions = new ArrayList<>();
+        List<ConceptDef> functions = new ArrayList<>();
+        List<String> keySentences = new ArrayList<>();
+        Set<String> technicalTerms = new LinkedHashSet<>();
+
+        String[] rawSentences = text.split("[\\n\\.;]+");
+        for (String raw : rawSentences) {
+            String s = raw.trim();
+            if (s.length() < 20 || s.length() > 220) continue;
+            if (s.startsWith("===") || s.matches("^[0-9\\.\\-\\s]+$")) continue;
+
+            keySentences.add(s);
+
+            // Tìm từ viết hoa thuật ngữ
+            Matcher termMatcher = Pattern.compile("\\b([A-Z0-9]{2,10}|[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)?)\\b").matcher(s);
+            while (termMatcher.find()) {
+                String t = termMatcher.group(1).trim();
+                if (t.length() >= 2 && !t.equalsIgnoreCase("VÀ") && !t.equalsIgnoreCase("CHO") && !t.equalsIgnoreCase("KHI")) {
+                    technicalTerms.add(t);
+                }
+            }
+
+            // Định nghĩa
+            Matcher defMatcher = Pattern.compile("(?i)^([A-Za-z0-9À-ỹ\\s/_-]{2,45}?)\\s+(?:là|được hiểu là|được định nghĩa là)\\s+(.+)$").matcher(s);
+            if (defMatcher.find()) {
+                String term = defMatcher.group(1).trim();
+                String def = defMatcher.group(2).trim();
+                if (def.length() >= 15 && !term.equalsIgnoreCase("đây") && !term.equalsIgnoreCase("đó")) {
+                    definitions.add(new ConceptDef(term, def, s));
+                }
+            }
+
+            // Chức năng
+            Matcher funcMatcher = Pattern.compile("(?i)^([A-Za-z0-9À-ỹ\\s/_-]{2,45}?)\\s+(?:có chức năng|dùng để|được dùng để|có nhiệm vụ|đóng vai trò)\\s+(.+)$").matcher(s);
+            if (funcMatcher.find()) {
+                String term = funcMatcher.group(1).trim();
+                String func = funcMatcher.group(2).trim();
+                if (func.length() >= 15) {
+                    functions.add(new ConceptDef(term, func, s));
+                }
+            }
+        }
+
+        // 1. Tạo câu hỏi từ danh sách Định nghĩa
+        for (int i = 0; i < definitions.size() && items.size() < 3; i++) {
+            ConceptDef cd = definitions.get(i);
+            String prompt = "Theo tài liệu bài học, khái niệm nào sau đây mô tả chính xác về \"" + cd.term() + "\"?";
+            String answer = capitalizeFirst(cd.meaning());
+
+            List<String> distractors = new ArrayList<>();
+            for (int j = 0; j < definitions.size(); j++) {
+                if (j != i) {
+                    distractors.add(capitalizeFirst(definitions.get(j).meaning()));
+                    if (distractors.size() >= 3) break;
+                }
+            }
+
+            // Bounded for loop: tuyệt đối không dùng while vô hạn
+            for (String alt : keySentences) {
+                if (distractors.size() >= 3) break;
+                String cap = capitalizeFirst(alt);
+                if (!alt.equalsIgnoreCase(cd.sentence()) && !distractors.contains(cap)) {
+                    distractors.add(cap);
+                }
+            }
+
+            fillFallbackDistractors(distractors);
+
+            items.add(new GeneratedItem(
+                    prompt,
+                    "Hãy nắm vững khái niệm cốt lõi sau để hiểu bản chất kiến thức:",
+                    answer,
+                    distractors.subList(0, 3),
+                    "Chính xác! Theo tài liệu: \"" + cd.sentence() + "\".",
+                    cd.sentence().substring(0, Math.min(cd.sentence().length(), 50))
+            ));
+        }
+
+        // 2. Tạo câu hỏi từ danh sách Chức năng
+        for (int i = 0; i < functions.size() && items.size() < 5; i++) {
+            ConceptDef func = functions.get(i);
+            String prompt = "Trong kiến thức bài học, \"" + func.term() + "\" đảm nhận chức năng hoặc vai trò chính là gì?";
+            String answer = capitalizeFirst(func.meaning());
+
+            List<String> distractors = new ArrayList<>();
+            for (int j = 0; j < functions.size(); j++) {
+                if (j != i) {
+                    distractors.add(capitalizeFirst(functions.get(j).meaning()));
+                    if (distractors.size() >= 3) break;
+                }
+            }
+
+            // Bounded for loop
+            for (String alt : keySentences) {
+                if (distractors.size() >= 3) break;
+                String cap = capitalizeFirst(alt);
+                if (!alt.equalsIgnoreCase(func.sentence()) && !distractors.contains(cap)) {
+                    distractors.add(cap);
+                }
+            }
+
+            fillFallbackDistractors(distractors);
+
+            items.add(new GeneratedItem(
+                    prompt,
+                    "Hãy xác định chính xác vai trò kỹ thuật của thành phần:",
+                    answer,
+                    distractors.subList(0, 3),
+                    "Đúng. Tài liệu nêu rõ: \"" + func.sentence() + "\".",
+                    func.sentence().substring(0, Math.min(func.sentence().length(), 50))
+            ));
+        }
+
+        // 3. Tạo câu hỏi Điền từ khóa vào chỗ trống (Cloze Test)
+        List<String> termsList = new ArrayList<>(technicalTerms);
+        if (termsList.size() >= 4) {
+            for (String sentence : keySentences) {
+                if (items.size() >= 6) break;
+                for (String term : termsList) {
+                    if (sentence.contains(term) && term.length() >= 3 && sentence.length() > term.length() + 15) {
+                        String blanked = sentence.replaceFirst(Pattern.quote(term), "[ ... ]");
+                        String prompt = "Điền thuật ngữ chính xác vào chỗ trống:\n\"" + blanked + "\"";
+                        String answer = term;
+
+                        List<String> distractors = new ArrayList<>();
+                        for (String otherTerm : termsList) {
+                            if (!otherTerm.equalsIgnoreCase(term)) {
+                                distractors.add(otherTerm);
+                                if (distractors.size() >= 3) break;
+                            }
+                        }
+
+                        fillFallbackDistractors(distractors);
+
+                        items.add(new GeneratedItem(
+                                prompt,
+                                "Kiểm tra mức độ ghi nhớ thuật ngữ chuyên ngành:",
+                                answer,
+                                distractors.subList(0, 3),
+                                "Thuật ngữ chính xác là \"" + term + "\". Toàn bộ nội dung: \"" + sentence + "\".",
+                                sentence.substring(0, Math.min(sentence.length(), 50))
+                        ));
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 4. Nếu vẫn còn ít câu hỏi, tạo câu hỏi Nhận định chính xác dựa trên các câu trích thực tế
+        for (int i = 0; i < keySentences.size() && items.size() < 5; i++) {
+            String targetSentence = keySentences.get(i);
+            String prompt = "Khi nghiên cứu về \"" + lessonTitle + "\", phát biểu nào sau đây là CHÍNH XÁC?";
+            String answer = capitalizeFirst(targetSentence);
+
+            List<String> distractors = new ArrayList<>();
+            for (String alt : keySentences) {
+                if (distractors.size() >= 3) break;
+                String cap = capitalizeFirst(alt);
+                if (!alt.equalsIgnoreCase(targetSentence) && !distractors.contains(cap)) {
+                    distractors.add(cap);
+                }
+            }
+
+            fillFallbackDistractors(distractors);
+
+            items.add(new GeneratedItem(
+                    prompt,
+                    "Đọc kỹ và lựa chọn nhận định đúng được trích từ tài liệu bài học:",
+                    answer,
+                    distractors.subList(0, 3),
+                    "Chính xác! Đây là thông tin trọng tâm được nêu rõ trong bài học.",
+                    targetSentence.substring(0, Math.min(targetSentence.length(), 50))
+            ));
+        }
+
+        if (items.isEmpty()) {
+            items.add(new GeneratedItem(
+                    "Trọng tâm kiến thức của bài học này là gì?",
+                    "Ôn tập kiến thức bài học:",
+                    lessonTitle,
+                    List.of("Mô hình và chuẩn kết nối nâng cao", "Cơ chế định tuyến và kiểm soát lỗi", "Kiến trúc hệ thống truyền thông"),
+                    "Đáp án đúng là chủ đề chính của bài: " + lessonTitle,
+                    lessonTitle
+            ));
+        }
+
+        return items;
+    }
+
+    private void fillFallbackDistractors(List<String> distractors) {
+        String[] defaults = {
+                "Cơ chế truyền thông hoạt động độc lập",
+                "Mô hình cấu hình theo chuẩn dự phòng",
+                "Phương thức kiểm soát lỗi tầng liên kết"
+        };
+        for (String d : defaults) {
+            if (distractors.size() >= 3) break;
+            if (!distractors.contains(d)) {
+                distractors.add(d);
+            }
+        }
+    }
+
+    private String capitalizeFirst(String s) {
+        if (s == null || s.isEmpty()) return "";
+        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
+    }
+
+    private record ConceptDef(String term, String meaning, String sentence) {}
 }

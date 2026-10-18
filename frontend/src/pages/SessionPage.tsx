@@ -23,11 +23,12 @@ interface SessionItem {
 }
 
 interface SessionPageProps {
+  lessonId?: string | null;
   onFinish: () => void;
   onExit: () => void;
 }
 
-export default function SessionPage({ onFinish, onExit }: SessionPageProps) {
+export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageProps) {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<SessionItem[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -50,11 +51,12 @@ export default function SessionPage({ onFinish, onExit }: SessionPageProps) {
   const [completed, setCompleted] = useState(false);
   const [finalSummary, setFinalSummary] = useState<any>(null);
 
-  // Tải danh sách bài học hôm nay
+  // Tải danh sách câu hỏi (theo bài học cụ thể hoặc hàng đợi ôn tập hôm nay)
   useEffect(() => {
     async function loadSession() {
       try {
-        const data = await apiRequest<any>('/api/session/today');
+        const endpoint = lessonId ? `/api/session/lesson/${lessonId}` : '/api/session/today';
+        const data = await apiRequest<any>(endpoint);
         if (data.items && data.items.length > 0) {
           setItems(data.items);
           setIsIntroMode(!data.items[0].introduced);
@@ -67,7 +69,7 @@ export default function SessionPage({ onFinish, onExit }: SessionPageProps) {
       }
     }
     loadSession();
-  }, []);
+  }, [lessonId]);
 
   const currentItem = items[currentIndex];
   const progressPercent = items.length > 0 ? Math.min(100, Math.round((currentIndex / items.length) * 100)) : 0;
@@ -149,6 +151,7 @@ export default function SessionPage({ onFinish, onExit }: SessionPageProps) {
             totalXpEarned: totalXp,
             isPerfect,
             failedItemIds,
+            lessonId: lessonId || undefined,
           }),
         });
         setFinalSummary(summary);

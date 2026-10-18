@@ -18,6 +18,7 @@ export default function CreateCourseModal({ isOpen, onClose, onSuccess }: Create
   const [title, setTitle] = useState('');
   const [examDate, setExamDate] = useState('');
   const [dailyMinutes, setDailyMinutes] = useState(20);
+  const [hasGeminiKey, setHasGeminiKey] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -25,6 +26,14 @@ export default function CreateCourseModal({ isOpen, onClose, onSuccess }: Create
   const [error, setError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      apiRequest<any>('/api/settings').then(res => {
+        setHasGeminiKey(!!res?.hasGeminiKey);
+      }).catch(() => {});
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -392,6 +401,21 @@ export default function CreateCourseModal({ isOpen, onClose, onSuccess }: Create
                   <option value={60}>60 phút / ngày</option>
                 </select>
               </div>
+            </div>
+
+            {/* AI Engine Status */}
+            <div className="flex items-center justify-between px-3.5 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-duo-dark-border text-xs mt-1">
+              <div className="flex items-center space-x-2">
+                <Sparkles className="w-3.5 h-3.5 text-duo-green" />
+                <span className="font-bold text-slate-600 dark:text-slate-300">Công nghệ sinh câu hỏi:</span>
+              </div>
+              <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-lg ${
+                hasGeminiKey
+                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                  : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+              }`}>
+                {hasGeminiKey ? '✓ Google Gemini' : 'Offline Semantic Engine'}
+              </span>
             </div>
 
             {/* Submit Button */}

@@ -43,6 +43,8 @@ public class SettingsService {
         dto.setTimezone(profile.getTimezone());
         dto.setSoundEnabled(profile.isSoundEnabled());
         dto.setTheme(profile.getTheme());
+        dto.setGeminiApiKey(profile.getGeminiApiKey());
+        dto.setHasGeminiKey(profile.getGeminiApiKey() != null && !profile.getGeminiApiKey().isBlank());
 
         if (activeCourse != null) {
             dto.setActiveCourseId(activeCourse.getId());
@@ -69,6 +71,9 @@ public class SettingsService {
         }
         if (request.getTheme() != null && !request.getTheme().isBlank()) {
             profile.setTheme(request.getTheme());
+        }
+        if (request.getGeminiApiKey() != null) {
+            profile.setGeminiApiKey(request.getGeminiApiKey().trim());
         }
         profileRepository.save(profile);
 

@@ -35,6 +35,9 @@ public class Profile {
     @Column(name = "theme")
     private String theme = "system";
 
+    @Column(name = "gemini_api_key")
+    private String geminiApiKey;
+
     public Profile() {}
 
     public Profile(String id) {
@@ -70,4 +73,7 @@ public class Profile {
 
     public String getTheme() { return theme != null ? theme : "system"; }
     public void setTheme(String theme) { this.theme = theme != null ? theme : "system"; }
+
+    public String getGeminiApiKey() { return geminiApiKey; }
+    public void setGeminiApiKey(String geminiApiKey) { this.geminiApiKey = geminiApiKey; }
 }

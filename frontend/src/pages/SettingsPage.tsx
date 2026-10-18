@@ -3,7 +3,7 @@ import { apiRequest } from '../api/client';
 import { 
   Settings, Volume2, VolumeX, Moon, Sun, Smartphone, Download, 
   Upload, Trash2, Check, AlertTriangle, Clock, Calendar, Sparkles,
-  LogOut, RefreshCw, ShieldCheck
+  LogOut, RefreshCw, ShieldCheck, Eye, EyeOff, ExternalLink, Key
 } from 'lucide-react';
 import { isSoundMuted, setSoundMuted, playSuccessSound, triggerHaptic } from '../utils/sound';
 
@@ -20,6 +20,8 @@ interface SettingsData {
   examDate: string | null;
   activeCourseId: string | null;
   activeCourseTitle: string | null;
+  hasGeminiKey?: boolean;
+  geminiApiKey?: string;
 }
 
 interface SettingsPageProps {
@@ -36,6 +38,8 @@ export default function SettingsPage({ onLogout, onRefreshAll }: SettingsPagePro
   const [selectedTheme, setSelectedTheme] = useState('system');
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [geminiKeyInput, setGeminiKeyInput] = useState('');
+  const [showGeminiKey, setShowGeminiKey] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -57,6 +61,9 @@ export default function SettingsPage({ onLogout, onRefreshAll }: SettingsPagePro
       setLoading(true);
       const data = await apiRequest<SettingsData>('/api/settings');
       setSettings(data);
+      if (data.geminiApiKey) {
+        setGeminiKeyInput(data.geminiApiKey);
+      }
       setSoundOn(data.soundEnabled);
       setSelectedTheme(data.theme || 'system');
       applyThemeToDOM(data.theme || 'system');
@@ -221,6 +228,84 @@ export default function SettingsPage({ onLogout, onRefreshAll }: SettingsPagePro
           <span>{message.text}</span>
         </div>
       )}
+
+      {/* Mục AI: Cấu hình Trí tuệ Nhân tạo Google Gemini */}
+      <section className="bg-white dark:bg-duo-dark-card border-2 border-slate-200 dark:border-duo-dark-border rounded-3xl p-5 shadow-sm space-y-4">
+        <div className="flex items-center justify-between border-b border-slate-100 dark:border-duo-dark-border pb-3">
+          <div className="flex items-center space-x-2">
+            <Sparkles className="w-5 h-5 text-duo-green fill-duo-green" />
+            <h2 className="text-sm font-black text-slate-800 dark:text-white uppercase tracking-wider">
+              Mô hình AI (Google Gemini)
+            </h2>
+          </div>
+          <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full border ${
+            settings?.hasGeminiKey
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-700'
+              : 'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-700'
+          }`}>
+            {settings?.hasGeminiKey ? '✓ Đang dùng Google Gemini' : 'Đang dùng Offline Engine'}
+          </span>
+        </div>
+
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Cấu hình API Key giúp StudyApp phân tích sâu bài học, tự động sinh các câu hỏi trắc nghiệm thông minh, câu hỏi giải thích thực tế và loại bỏ hoàn toàn các câu hỏi ngẫu nhiên.
+        </p>
+
+        <div className="space-y-2">
+          <label className="block text-xs font-bold text-slate-700 dark:text-slate-200">
+            Khóa Google Gemini API Key
+          </label>
+          <div className="flex items-center space-x-2">
+            <div className="relative flex-1">
+              <input
+                type={showGeminiKey ? 'text' : 'password'}
+                value={geminiKeyInput}
+                onChange={(e) => setGeminiKeyInput(e.target.value)}
+                placeholder="Dán mã API Key dạng AIzaSy..."
+                className="w-full px-3 py-2.5 text-xs font-mono font-medium rounded-xl border-2 border-slate-200 dark:border-duo-dark-border bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-white focus:outline-none focus:border-duo-green"
+              />
+              <button
+                type="button"
+                onClick={() => setShowGeminiKey(!showGeminiKey)}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                {showGeminiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <button
+              onClick={() => handleUpdate({ geminiApiKey: geminiKeyInput.trim() })}
+              disabled={saving}
+              className="px-4 py-2.5 rounded-xl bg-duo-green text-white font-black text-xs btn-duo-green flex items-center space-x-1"
+            >
+              <Check className="w-4 h-4" />
+              <span>Lưu Key</span>
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between pt-1">
+            <a
+              href="https://aistudio.google.com/app/apikey"
+              target="_blank"
+              rel="noreferrer"
+              className="text-[11px] font-bold text-duo-blue hover:underline flex items-center space-x-1"
+            >
+              <span>Lấy API Key miễn phí tại Google AI Studio</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+            {settings?.hasGeminiKey && (
+              <button
+                onClick={() => {
+                  setGeminiKeyInput('');
+                  handleUpdate({ geminiApiKey: '' });
+                }}
+                className="text-[11px] font-bold text-rose-500 hover:underline"
+              >
+                Xóa Key này
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
 
       {/* Mục 1: Nhịp học & Mục tiêu */}
       <section className="bg-white dark:bg-duo-dark-card border-2 border-slate-200 dark:border-duo-dark-border rounded-3xl p-5 shadow-sm space-y-4">

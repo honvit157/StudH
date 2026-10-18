@@ -17,6 +17,7 @@ function AppContent() {
   const { isAuthenticated, isLoading, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>('home');
   const [inSession, setInSession] = useState(false);
+  const [currentLessonId, setCurrentLessonId] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [stats, setStats] = useState<any>(null);
   const [course, setCourse] = useState<any>(null);
@@ -58,11 +59,16 @@ function AppContent() {
   if (inSession) {
     return (
       <SessionPage
+        lessonId={currentLessonId}
         onFinish={() => {
           setInSession(false);
+          setCurrentLessonId(null);
           refreshData();
         }}
-        onExit={() => setInSession(false)}
+        onExit={() => {
+          setInSession(false);
+          setCurrentLessonId(null);
+        }}
       />
     );
   }
@@ -152,7 +158,10 @@ function AppContent() {
 
               {/* Nút lớn Học hôm nay */}
               <button
-                onClick={() => setInSession(true)}
+                onClick={() => {
+                  setCurrentLessonId(null);
+                  setInSession(true);
+                }}
                 className="w-full py-4 px-6 rounded-2xl font-black text-white uppercase tracking-wider text-sm flex items-center justify-center space-x-2 btn-duo-green"
               >
                 <Play className="w-5 h-5 fill-white" />
@@ -195,7 +204,10 @@ function AppContent() {
         )}
 
         {activeTab === 'path' && (
-          <LearningPathPage onStartLesson={() => setInSession(true)} />
+          <LearningPathPage onStartLesson={(lessonId) => {
+            setCurrentLessonId(lessonId);
+            setInSession(true);
+          }} />
         )}
 
         {activeTab === 'schedule' && (

@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -145,10 +146,35 @@ public class CourseCreationPipelineService {
             updateTask(taskId, 85, "Đang tính toán thuật toán xếp lịch học ngắt quãng...");
             scheduleService.autoScheduleCourse(course.getId());
 
-            // Tự động sinh sẵn câu hỏi cho bài học đầu tiên để người dùng có thể học được ngay
-            if (firstLesson != null) {
-                updateTask(taskId, 92, "Đang sinh câu hỏi mẫu cho bài đầu tiên...");
-                generateItemsForLesson(firstLesson.getId());
+            // Tự động sinh sẵn câu hỏi cho các bài học đã mở khóa để người dùng có thể học được ngay
+            List<Unit> savedUnits = unitRepository.findByCourseIdOrderBySortOrderAsc(course.getId());
+            List<Lesson> readyLessons = new ArrayList<>();
+            for (Unit u : savedUnits) {
+                List<Section> sections = sectionRepository.findByUnitIdOrderBySortOrderAsc(u.getId());
+                for (Section s : sections) {
+                    List<Lesson> lessons = lessonRepository.findBySectionIdOrderBySortOrderAsc(s.getId());
+                    for (Lesson l : lessons) {
+                        if ("ready".equalsIgnoreCase(l.getStatus())) {
+                            readyLessons.add(l);
+                        }
+                    }
+                }
+            }
+
+            if (readyLessons.isEmpty() && firstLesson != null) {
+                readyLessons.add(firstLesson);
+            }
+
+            int count = 1;
+            for (Lesson l : readyLessons) {
+                if (count > 5) break;
+                updateTask(taskId, Math.min(98, 85 + (count * 2)), "Đang sinh câu hỏi cho bài " + count + "...");
+                try {
+                    generateItemsForLesson(l.getId());
+                } catch (Exception ex) {
+                    System.err.println("Could not pre-generate items for lesson " + l.getId() + ": " + ex.getMessage());
+                }
+                count++;
             }
 
             taskMap.put(taskId, new TaskStatusDto(taskId, "COMPLETED", 100, "Tạo khóa học thành công!", course.getId(), null));

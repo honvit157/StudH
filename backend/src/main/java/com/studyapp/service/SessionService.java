@@ -18,26 +18,38 @@ import java.util.stream.Collectors;
 public class SessionService {
 
     private final CourseRepository courseRepository;
+    private final UnitRepository unitRepository;
+    private final SectionRepository sectionRepository;
     private final LessonRepository lessonRepository;
     private final ItemRepository itemRepository;
     private final ItemStateRepository itemStateRepository;
     private final ProfileRepository profileRepository;
     private final SrsService srsService;
+    private final CourseCreationPipelineService pipelineService;
+    private final AiService aiService;
     private final ObjectMapper objectMapper;
 
     public SessionService(CourseRepository courseRepository,
+                          UnitRepository unitRepository,
+                          SectionRepository sectionRepository,
                           LessonRepository lessonRepository,
                           ItemRepository itemRepository,
                           ItemStateRepository itemStateRepository,
                           ProfileRepository profileRepository,
                           SrsService srsService,
+                          CourseCreationPipelineService pipelineService,
+                          AiService aiService,
                           ObjectMapper objectMapper) {
         this.courseRepository = courseRepository;
+        this.unitRepository = unitRepository;
+        this.sectionRepository = sectionRepository;
         this.lessonRepository = lessonRepository;
         this.itemRepository = itemRepository;
         this.itemStateRepository = itemStateRepository;
         this.profileRepository = profileRepository;
         this.srsService = srsService;
+        this.pipelineService = pipelineService;
+        this.aiService = aiService;
         this.objectMapper = objectMapper;
     }
 
@@ -197,6 +209,21 @@ public class SessionService {
                     .collect(Collectors.toList());
         }
 
+        // Cập nhật trạng thái bài học nếu phiên học thuộc về 1 bài học cụ thể
+        if (request.lessonId() != null) {
+            lessonRepository.findById(request.lessonId()).ifPresent(lesson -> {
+                lesson.setStatus("done");
+                int score = request.totalQuestions() > 0
+                        ? (int) Math.round((double) request.correctCount() / request.totalQuestions() * 100)
+                        : 100;
+                lesson.setBestScore(Math.max(lesson.getBestScore() != null ? lesson.getBestScore() : 0, score));
+                lesson.setCompletedAt(OffsetDateTime.now());
+                lessonRepository.save(lesson);
+
+                unlockNextLesson(lesson);
+            });
+        }
+
         return new FinishSessionResponse(
                 request.totalQuestions(),
                 request.correctCount(),
@@ -208,6 +235,77 @@ public class SessionService {
                 request.isPerfect(),
                 failedItems
         );
+    }
+
+    @Transactional
+    public TodaySessionResponse getLessonSession(UUID lessonId) {
+        Lesson lesson = lessonRepository.findById(lessonId)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy bài học: " + lessonId));
+
+        List<Item> items = itemRepository.findByLessonId(lessonId);
+        if (items.isEmpty()) {
+            try {
+                items = pipelineService.generateItemsForLesson(lessonId);
+            } catch (Exception e) {
+                System.err.println("Lazy item generation failed for lesson " + lessonId + ": " + e.getMessage());
+            }
+        }
+
+        if (items.isEmpty()) {
+            String sourceText = lesson.getSourceText() != null && !lesson.getSourceText().isBlank()
+                    ? lesson.getSourceText() : lesson.getTitle();
+            List<AiService.GeneratedItem> genItems = aiService.buildFallbackItems(lesson.getTitle(), sourceText);
+            for (AiService.GeneratedItem gi : genItems) {
+                try {
+                    String distJson = objectMapper.writeValueAsString(gi.distractors());
+                    Item item = new Item(lessonId, gi.prompt(), gi.intro(), gi.answer(), distJson, gi.explanation(), gi.sourceQuote());
+                    itemRepository.save(item);
+                    items.add(item);
+                } catch (Exception ignored) {}
+            }
+        }
+
+        List<SessionItemDto> sessionQueue = new ArrayList<>();
+        for (Item item : items) {
+            ItemState state = itemStateRepository.findById(item.getId()).orElse(null);
+            boolean introduced = state != null && state.isIntroduced();
+            sessionQueue.add(mapToDto(item, lesson.getTitle(), introduced, false));
+        }
+
+        int estimatedMinutes = Math.max(2, (int) Math.ceil(sessionQueue.size() * 0.5));
+        return new TodaySessionResponse(lesson.getTitle(), sessionQueue.size(), 0, sessionQueue.size(), estimatedMinutes, sessionQueue);
+    }
+
+    private void unlockNextLesson(Lesson currentLesson) {
+        try {
+            Section currentSection = sectionRepository.findById(currentLesson.getSectionId()).orElse(null);
+            if (currentSection == null) return;
+
+            Unit currentUnit = unitRepository.findById(currentSection.getUnitId()).orElse(null);
+            if (currentUnit == null) return;
+
+            List<Unit> units = unitRepository.findByCourseIdOrderBySortOrderAsc(currentUnit.getCourseId());
+            List<Lesson> allLessons = new ArrayList<>();
+            for (Unit u : units) {
+                List<Section> sections = sectionRepository.findByUnitIdOrderBySortOrderAsc(u.getId());
+                for (Section s : sections) {
+                    allLessons.addAll(lessonRepository.findBySectionIdOrderBySortOrderAsc(s.getId()));
+                }
+            }
+
+            for (int i = 0; i < allLessons.size() - 1; i++) {
+                if (allLessons.get(i).getId().equals(currentLesson.getId())) {
+                    Lesson next = allLessons.get(i + 1);
+                    if ("locked".equalsIgnoreCase(next.getStatus())) {
+                        next.setStatus("ready");
+                        lessonRepository.save(next);
+                    }
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Could not unlock next lesson: " + e.getMessage());
+        }
     }
 
     private SessionItemDto mapToDto(Item item, String lessonTitle, boolean introduced, boolean isReview) {

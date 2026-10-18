@@ -26,6 +26,12 @@ public class SessionController {
         return ResponseEntity.ok(response);
     }
 
+    @GetMapping("/lesson/{lessonId}")
+    public ResponseEntity<TodaySessionResponse> getLessonSession(@PathVariable java.util.UUID lessonId) {
+        TodaySessionResponse response = sessionService.getLessonSession(lessonId);
+        return ResponseEntity.ok(response);
+    }
+
     @PostMapping("/answer")
     public ResponseEntity<AnswerResponse> submitAnswer(@Valid @RequestBody AnswerRequest request) {
         AnswerResponse response = sessionService.processAnswer(request);

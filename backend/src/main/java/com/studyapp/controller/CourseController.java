@@ -5,7 +5,11 @@ import com.studyapp.dto.ScheduleResponse;
 import com.studyapp.dto.TaskStatusDto;
 import com.studyapp.model.Course;
 import com.studyapp.model.Item;
+import com.studyapp.model.Lesson;
 import com.studyapp.repository.CourseRepository;
+import com.studyapp.repository.LessonRepository;
+import com.studyapp.repository.SectionRepository;
+import com.studyapp.repository.UnitRepository;
 import com.studyapp.service.CourseCreationPipelineService;
 import com.studyapp.service.ScheduleService;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -23,13 +27,22 @@ import java.util.UUID;
 public class CourseController {
 
     private final CourseRepository courseRepository;
+    private final UnitRepository unitRepository;
+    private final SectionRepository sectionRepository;
+    private final LessonRepository lessonRepository;
     private final ScheduleService scheduleService;
     private final CourseCreationPipelineService pipelineService;
 
     public CourseController(CourseRepository courseRepository,
+                            UnitRepository unitRepository,
+                            SectionRepository sectionRepository,
+                            LessonRepository lessonRepository,
                             ScheduleService scheduleService,
                             CourseCreationPipelineService pipelineService) {
         this.courseRepository = courseRepository;
+        this.unitRepository = unitRepository;
+        this.sectionRepository = sectionRepository;
+        this.lessonRepository = lessonRepository;
         this.scheduleService = scheduleService;
         this.pipelineService = pipelineService;
     }
@@ -91,5 +104,34 @@ public class CourseController {
     public ResponseEntity<Void> reschedule(@PathVariable UUID id) {
         scheduleService.autoScheduleCourse(id);
         return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/lessons/{lessonId}/unlock")
+    public ResponseEntity<Map<String, String>> unlockLesson(@PathVariable UUID lessonId) {
+        Lesson lesson = lessonRepository.findById(lessonId)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy bài học"));
+        lesson.setStatus("ready");
+        lessonRepository.save(lesson);
+        return ResponseEntity.ok(Map.of("message", "Đã mở khóa bài học thành công", "status", "ready"));
+    }
+
+    @PostMapping("/courses/{id}/unlock-all")
+    public ResponseEntity<Map<String, Object>> unlockAllLessons(@PathVariable UUID id) {
+        List<com.studyapp.model.Unit> units = unitRepository.findByCourseIdOrderBySortOrderAsc(id);
+        int unlockedCount = 0;
+        for (com.studyapp.model.Unit u : units) {
+            List<com.studyapp.model.Section> sections = sectionRepository.findByUnitIdOrderBySortOrderAsc(u.getId());
+            for (com.studyapp.model.Section s : sections) {
+                List<Lesson> lessons = lessonRepository.findBySectionIdOrderBySortOrderAsc(s.getId());
+                for (Lesson l : lessons) {
+                    if ("locked".equalsIgnoreCase(l.getStatus())) {
+                        l.setStatus("ready");
+                        lessonRepository.save(l);
+                        unlockedCount++;
+                    }
+                }
+            }
+        }
+        return ResponseEntity.ok(Map.of("message", "Đã mở khóa toàn bộ lộ trình", "unlockedCount", unlockedCount));
     }
 }
