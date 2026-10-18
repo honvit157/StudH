@@ -133,7 +133,23 @@ public class SessionService {
         int estimatedMinutes = (int) Math.ceil((reviewCount * 0.3) + (newCount * 0.5));
         if (estimatedMinutes == 0 && !sessionQueue.isEmpty()) estimatedMinutes = 3;
 
-        return new TodaySessionResponse(activeCourse.getTitle(), sessionQueue.size(), reviewCount, newCount, estimatedMinutes, sessionQueue);
+        List<Item> currentSessionItems = !newItems.isEmpty() ? newItems : dueItems;
+        LessonOverviewDto overview = aiService.generateLessonOverview(
+                activeCourse.getTitle(),
+                activeCourse.getRawText(),
+                currentSessionItems
+        );
+
+        return new TodaySessionResponse(
+                activeCourse.getTitle(),
+                sessionQueue.size(),
+                reviewCount,
+                newCount,
+                estimatedMinutes,
+                sessionQueue,
+                activeCourse.getTitle(),
+                overview
+        );
     }
 
     @Transactional
@@ -275,7 +291,8 @@ public class SessionService {
         }
 
         int estimatedMinutes = Math.max(2, (int) Math.ceil(sessionQueue.size() * 0.5));
-        return new TodaySessionResponse(lesson.getTitle(), sessionQueue.size(), 0, sessionQueue.size(), estimatedMinutes, sessionQueue);
+        LessonOverviewDto overview = aiService.generateLessonOverview(lesson.getTitle(), lesson.getSourceText(), items);
+        return new TodaySessionResponse(lesson.getTitle(), sessionQueue.size(), 0, sessionQueue.size(), estimatedMinutes, sessionQueue, lesson.getTitle(), overview);
     }
 
     private void unlockNextLesson(Lesson currentLesson) {

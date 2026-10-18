@@ -22,6 +22,19 @@ interface SessionItem {
   isRetry?: boolean;
 }
 
+interface ConceptItem {
+  term: string;
+  explanation: string;
+  tag: string;
+}
+
+interface LessonOverview {
+  title: string;
+  description: string;
+  keyPoints: string[];
+  concepts: ConceptItem[];
+}
+
 interface SessionPageProps {
   lessonId?: string | null;
   onFinish: () => void;
@@ -53,6 +66,11 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
     xpEarned: number;
   } | null>(null);
 
+  const [lessonOverview, setLessonOverview] = useState<LessonOverview | null>(null);
+  const [sessionTitle, setSessionTitle] = useState<string>('');
+  const [showOverview, setShowOverview] = useState(true);
+  const [overviewModalOpen, setOverviewModalOpen] = useState(false);
+
   const [startTime, setStartTime] = useState<number>(Date.now());
   const [totalXp, setTotalXp] = useState(0);
   const [correctCount, setCorrectCount] = useState(0);
@@ -69,6 +87,13 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
         const data = await apiRequest<any>(endpoint);
         if (data.items && data.items.length > 0) {
           setItems(data.items);
+          setSessionTitle(data.lessonTitle || data.courseTitle || '');
+          if (data.overview && ((data.overview.keyPoints && data.overview.keyPoints.length > 0) || (data.overview.concepts && data.overview.concepts.length > 0))) {
+            setLessonOverview(data.overview);
+            setShowOverview(true);
+          } else {
+            setShowOverview(false);
+          }
           const firstItem = data.items[0];
           const hasOptions = firstItem.options && firstItem.options.length >= 2;
           setIsIntroMode(!firstItem.introduced && !hasOptions);
@@ -290,13 +315,125 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
     );
   }
 
+  // MÀN HÌNH KHÁI QUÁT KIẾN THỨC BÀI HỌC (Trước khi vào làm trắc nghiệm)
+  if (showOverview && lessonOverview) {
+    return (
+      <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-duo-dark">
+        {/* Top Header */}
+        <div className="sticky top-0 z-30 bg-white/95 dark:bg-duo-dark-card/95 backdrop-blur border-b border-slate-200 dark:border-duo-dark-border px-4 py-3 flex items-center justify-between max-w-xl mx-auto w-full">
+          <button
+            onClick={onExit}
+            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <div className="flex items-center space-x-1.5 font-bold text-xs text-duo-blue bg-blue-50 dark:bg-blue-950/40 px-3 py-1.5 rounded-full border border-blue-200 dark:border-blue-900/50">
+            <BookOpen className="w-4 h-4 text-duo-blue" />
+            <span>Khái quát bài học</span>
+          </div>
+          <div className="w-6" />
+        </div>
+
+        {/* Content Body */}
+        <div className="flex-1 max-w-xl mx-auto w-full p-4 flex flex-col justify-between pb-28">
+          <div className="py-2 space-y-6">
+            <div>
+              <span className="text-xs font-black uppercase tracking-wider text-duo-blue dark:text-sky-400">
+                {sessionTitle || 'Kiến thức trọng tâm'}
+              </span>
+              <h1 className="text-2xl sm:text-3xl font-black text-slate-800 dark:text-white mt-1 mb-2">
+                {lessonOverview.title}
+              </h1>
+              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
+                {lessonOverview.description}
+              </p>
+            </div>
+
+            {/* Ghi nhớ cốt lõi (Key points) */}
+            {lessonOverview.keyPoints && lessonOverview.keyPoints.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center space-x-2 text-xs font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  <Sparkles className="w-4 h-4 text-amber-500" />
+                  <span>Điểm cốt lõi cần nhớ ({lessonOverview.keyPoints.length})</span>
+                </div>
+                <div className="space-y-2">
+                  {lessonOverview.keyPoints.map((point, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-start space-x-3 p-3.5 rounded-2xl bg-white dark:bg-duo-dark-card border-2 border-slate-200 dark:border-duo-dark-border shadow-sm"
+                    >
+                      <span className="w-6 h-6 rounded-xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 font-black text-xs flex items-center justify-center flex-shrink-0 mt-0.5">
+                        ✓
+                      </span>
+                      <span className="text-sm font-semibold text-slate-700 dark:text-slate-200 leading-snug">
+                        {point}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Thuật ngữ & Khái niệm (Concepts) */}
+            {lessonOverview.concepts && lessonOverview.concepts.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center space-x-2 text-xs font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  <BookOpen className="w-4 h-4 text-duo-blue" />
+                  <span>Thuật ngữ & Khái niệm trọng tâm</span>
+                </div>
+                <div className="space-y-2.5">
+                  {lessonOverview.concepts.map((concept, idx) => (
+                    <div
+                      key={idx}
+                      className="p-4 rounded-2xl bg-white dark:bg-duo-dark-card border-2 border-slate-200 dark:border-duo-dark-border shadow-sm"
+                    >
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-base font-black text-slate-900 dark:text-white">
+                          {concept.term}
+                        </span>
+                        <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-duo-blue dark:text-sky-400 border border-blue-200 dark:border-blue-900/50">
+                          {concept.tag || 'Khái niệm'}
+                        </span>
+                      </div>
+                      <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
+                        {concept.explanation}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Bottom Sticky Action Bar */}
+        <div className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-duo-dark-card/95 backdrop-blur border-t-2 border-slate-200 dark:border-duo-dark-border p-4 z-40">
+          <div className="max-w-xl mx-auto">
+            <button
+              onClick={() => {
+                setShowOverview(false);
+                setStartTime(Date.now());
+                playSuccessSound();
+                triggerHaptic('success');
+              }}
+              className="w-full py-4 rounded-2xl font-black text-white uppercase tracking-wider text-sm sm:text-base btn-duo-green flex items-center justify-center space-x-2 shadow-duo-green"
+            >
+              <span>Bắt đầu luyện tập trắc nghiệm</span>
+              <ArrowRight className="w-5 h-5 ml-1" />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-duo-dark">
       {/* Top Header: Close button & Progress bar */}
-      <div className="sticky top-0 z-30 bg-white/95 dark:bg-duo-dark-card/95 backdrop-blur border-b border-slate-200 dark:border-duo-dark-border px-4 py-3 flex items-center space-x-4 max-w-xl mx-auto w-full">
+      <div className="sticky top-0 z-30 bg-white/95 dark:bg-duo-dark-card/95 backdrop-blur border-b border-slate-200 dark:border-duo-dark-border px-4 py-3 flex items-center space-x-3 max-w-xl mx-auto w-full">
         <button
           onClick={onExit}
-          className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
+          className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition flex-shrink-0"
         >
           <X className="w-6 h-6" />
         </button>
@@ -309,7 +446,18 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
           />
         </div>
 
-        <div className="flex items-center space-x-1 font-bold text-xs text-amber-500 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 rounded-full border border-amber-200 dark:border-amber-900/50">
+        {lessonOverview && (
+          <button
+            onClick={() => setOverviewModalOpen(true)}
+            title="Xem tóm tắt lý thuyết bài học"
+            className="px-2.5 py-1.5 rounded-xl text-duo-blue bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 flex items-center space-x-1 text-xs font-bold hover:bg-blue-100 dark:hover:bg-blue-900/60 transition flex-shrink-0"
+          >
+            <BookOpen className="w-4 h-4" />
+            <span className="hidden sm:inline">Lý thuyết</span>
+          </button>
+        )}
+
+        <div className="flex items-center space-x-1 font-bold text-xs text-amber-500 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 rounded-full border border-amber-200 dark:border-amber-900/50 flex-shrink-0">
           <Sparkles className="w-4 h-4" />
           <span>+{totalXp} XP</span>
         </div>
@@ -467,6 +615,74 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
                   Tiếp tục
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal xem lại tóm tắt lý thuyết trong khi làm trắc nghiệm */}
+      {overviewModalOpen && lessonOverview && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in">
+          <div className="w-full max-w-xl max-h-[85vh] bg-white dark:bg-duo-dark-card border-2 border-slate-200 dark:border-duo-dark-border rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
+              <div className="flex items-center space-x-2">
+                <BookOpen className="w-5 h-5 text-duo-blue" />
+                <h3 className="text-base font-black text-slate-800 dark:text-white">
+                  Tóm tắt lý thuyết: {lessonOverview.title}
+                </h3>
+              </div>
+              <button
+                onClick={() => setOverviewModalOpen(false)}
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto pr-1 space-y-4 flex-1">
+              {lessonOverview.keyPoints && lessonOverview.keyPoints.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-400">
+                    Điểm cốt lõi
+                  </h4>
+                  <div className="space-y-1.5">
+                    {lessonOverview.keyPoints.map((p, idx) => (
+                      <div key={idx} className="flex items-start space-x-2.5 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-duo-dark-border text-xs font-medium text-slate-700 dark:text-slate-200">
+                        <span className="text-emerald-500 font-bold">✓</span>
+                        <span>{p}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {lessonOverview.concepts && lessonOverview.concepts.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-400">
+                    Thuật ngữ & Khái niệm
+                  </h4>
+                  <div className="space-y-2">
+                    {lessonOverview.concepts.map((c, idx) => (
+                      <div key={idx} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-duo-dark-border text-xs">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-duo-blue dark:text-sky-400">{c.term}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-bold">{c.tag}</span>
+                        </div>
+                        <p className="text-slate-600 dark:text-slate-300">{c.explanation}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 mt-2">
+              <button
+                onClick={() => setOverviewModalOpen(false)}
+                className="w-full py-3 rounded-xl font-black text-white uppercase tracking-wider text-xs btn-duo-blue"
+              >
+                Đóng và tiếp tục làm bài
+              </button>
             </div>
           </div>
         </div>

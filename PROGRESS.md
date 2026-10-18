@@ -188,9 +188,19 @@ npm run dev
 
 ---
 
-### Khắc Phục Lỗi Ngân Hàng Câu Hỏi & Hiển Thị Đề Thi (Fix Ngày 18/10/2026)
+### Cải Tiến Trải Nghiệm Học Tập (Cập Nhật Ngày 18/10/2026)
 - **Vấn đề đã khắc phục**:
   1. **Câu hỏi bị cắt cụt (Prompt truncation)**: Thuật toán quét ngược (`parseExamQuestions`) trước đó bị ngắt sớm khi gặp ký tự cuối câu hỏi (`?`, `:`, `nào`, `là`), dẫn đến các câu nhiều dòng chỉ còn lại đuôi câu (như `"cụm từ nào?"`, `"được gọi là"`). Đã sửa thành bộ quét ngược thu thập toàn bộ các dòng của câu hỏi cho đến khi chạm điểm bắt đầu câu hỏi (`Câu \d+:`, `Question \d+:`) hoặc lựa chọn của câu trước.
   2. **Đáp án bị lộ chữ `(đúng)`**: Hàm `buildOutlineFromExamQuestions` và phương thức lưu đáp án trước đó vô tình gắn nhãn `(đúng)` vào nội dung chuỗi đáp án hiển thị. Đã bổ sung bộ lọc `cleanChoiceText` triệt để loại bỏ `(đúng)`, `(dung)`, `(sai)`, `*`, `✓`, `[x]` ở cả Backend (`AiService`, `SessionService`, `CourseCreationPipelineService`) và Frontend (`SessionPage.tsx`).
-  3. **Thẻ "Khái niệm mới" thừa thãi**: Bỏ màn hình trung gian "Khái niệm mới" đối với các câu trắc nghiệm nhiều lựa chọn (`hasOptions >= 2`), cho phép người học vào thẳng bài tập trắc nghiệm không bị gián đoạn.
+  3. **Khái quát kiến thức bài học trước khi làm trắc nghiệm**:
+     - Thêm `LessonOverviewDto` ở Backend và cập nhật `TodaySessionResponse` trả về dữ liệu tổng quan bài học.
+     - Hàm `AiService.generateLessonOverview`: Tự động phân tích, chắt lọc nội dung câu hỏi/đáp án của bài học để sinh ra:
+       * Tiêu đề & tóm tắt ngắn của bài.
+       * 3–6 điểm cốt lõi cần nhớ (`keyPoints`).
+       * Thẻ thuật ngữ & định nghĩa trọng tâm (`concepts`) phân loại theo tag (`Định nghĩa`, `Thuật ngữ`, `Trọng tâm`).
+     - Giao diện `SessionPage.tsx`:
+       * Hiển thị **Màn hình Khái quát kiến thức bài học** đầu phiên học trước khi vào các câu hỏi trắc nghiệm, chuẩn phong cách Duolingo sắc nét.
+       * Nút bấm lớn cố định dưới màn hình: **"Bắt đầu luyện tập trắc nghiệm →"** để chuyển thẳng vào làm trắc nghiệm.
+       * Nút **"Lý thuyết"** gắn trên thanh điều hướng đầu trang cho phép mở lại modal tóm tắt kiến thức bất cứ lúc nào trong khi làm bài trắc nghiệm mà không mất tiến độ.
   4. **Tự động vá dữ liệu cũ (Auto-repair)**: Cơ chế `@EventListener(ApplicationReadyEvent.class)` tự động phát hiện và vá lại các khóa học cũ bị lỗi trong cơ sở dữ liệu ngay khi khởi động.
+

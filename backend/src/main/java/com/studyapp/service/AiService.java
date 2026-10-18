@@ -2,6 +2,8 @@ package com.studyapp.service;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.studyapp.dto.LessonOverviewDto;
+import com.studyapp.model.Item;
 import com.studyapp.repository.ProfileRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -504,6 +506,112 @@ public class AiService {
 
         // 2. Trích xuất ngữ nghĩa thông minh từ giáo trình
         return buildSmartConceptItems(lessonTitle, sourceText);
+    }
+
+    /**
+     * Tự động tổng hợp Khái quát kiến thức bài học (Lesson Overview)
+     * Hiển thị cho người học trước khi bắt đầu bài tập trắc nghiệm.
+     */
+    public LessonOverviewDto generateLessonOverview(String lessonTitle, String sourceText, List<Item> items) {
+        String cleanTitle = lessonTitle != null ? lessonTitle.replaceFirst("^[#\\*\\-\\s]+", "").trim() : "Kiến thức bài học";
+        List<String> keyPoints = new ArrayList<>();
+        List<LessonOverviewDto.ConceptItemDto> concepts = new ArrayList<>();
+
+        if (items != null && !items.isEmpty()) {
+            for (Item item : items) {
+                String prompt = item.getPrompt();
+                String answer = cleanChoiceText(item.getAnswer());
+                if (prompt == null || answer == null || answer.isBlank()) continue;
+
+                // Chuẩn hóa prompt bỏ prefix Câu 1:, Question 1:, v.v.
+                String pText = prompt.replaceFirst("^(?i)(?:Câu|Question|Bài|Item)\\s*\\d+[:\\.\\s]+", "")
+                        .replaceFirst("(?i)^[A-Za-z0-9À-ỹ\\s]+(?:MMT|Internet|Mạng)\\s*", "")
+                        .trim();
+
+                // Dạng Đúng / Sai
+                if (answer.equalsIgnoreCase("Đúng") || answer.equalsIgnoreCase("Sai")) {
+                    String cleanP = pText.replaceFirst("\\?$", ".");
+                    if (answer.equalsIgnoreCase("Đúng")) {
+                        keyPoints.add("Khẳng định chuẩn: " + cleanP);
+                    } else {
+                        keyPoints.add("Lưu ý (Phát biểu SAI): " + cleanP);
+                    }
+                    continue;
+                }
+
+                // Dạng viết tắt thuật ngữ (VD: LAN, IANA, HTTP...)
+                Matcher acronymMatcher = Pattern.compile("\\b([A-Z0-9]{2,10})\\b.*(?:viết tắt|là gì|có nghĩa là|cụm từ nào)", Pattern.CASE_INSENSITIVE).matcher(pText);
+                if (acronymMatcher.find()) {
+                    String term = acronymMatcher.group(1);
+                    concepts.add(new LessonOverviewDto.ConceptItemDto(
+                            term,
+                            "Viết tắt của: " + answer + (item.getExplanation() != null ? " (" + cleanChoiceText(item.getExplanation()) + ")" : ""),
+                            "Thuật ngữ"
+                    ));
+                    keyPoints.add(term + " = " + answer);
+                    continue;
+                }
+
+                // Dạng định nghĩa (được gọi là, định nghĩa là, có chức năng...)
+                if (pText.matches("(?i).*(được gọi là|chính là|định nghĩa là|có chức năng|vai trò là).*")) {
+                    String coreDef = pText.replaceFirst("(?i)\\s*(?:được gọi là|chính là|định nghĩa là)[:\\?\\s]*$", "").trim();
+                    concepts.add(new LessonOverviewDto.ConceptItemDto(
+                            answer,
+                            coreDef,
+                            "Định nghĩa"
+                    ));
+                    keyPoints.add(answer + ": " + coreDef);
+                    continue;
+                }
+
+                // Dạng khái niệm tổng quát
+                String shortQ = pText.length() > 65 ? pText.substring(0, 65) + "..." : pText;
+                concepts.add(new LessonOverviewDto.ConceptItemDto(
+                        answer,
+                        pText.replaceFirst("\\?$", "") + " → " + answer,
+                        "Trọng tâm"
+                ));
+                keyPoints.add(shortQ.replaceFirst("\\?$", "") + " → " + answer);
+            }
+        }
+
+        // Nếu ít hơn 3 ý, trích xuất thêm từ sourceText (Lý thuyết)
+        if (keyPoints.size() < 3 && sourceText != null && !sourceText.isBlank()) {
+            String[] sentences = sourceText.split("[\\n\\.;]+");
+            for (String s : sentences) {
+                String tr = s.trim();
+                if (tr.length() < 25 || tr.length() > 180) continue;
+                if (tr.startsWith("===") || tr.matches("^[0-9A-D\\.\\-\\s:]+$")) continue;
+
+                Matcher defMatcher = Pattern.compile("(?i)^([A-Za-z0-9À-ỹ\\s/_-]{2,35}?)\\s+(?:là|được hiểu là|được định nghĩa là|dùng để|có chức năng)\\s+(.+)$").matcher(tr);
+                if (defMatcher.find()) {
+                    String term = defMatcher.group(1).trim();
+                    String def = defMatcher.group(2).trim();
+                    if (!term.equalsIgnoreCase("đây") && !term.equalsIgnoreCase("đó") && def.length() > 10) {
+                        concepts.add(new LessonOverviewDto.ConceptItemDto(term, def, "Khái niệm"));
+                        keyPoints.add(term + ": " + def);
+                    }
+                } else if (tr.length() > 30 && keyPoints.size() < 5) {
+                    keyPoints.add(tr);
+                }
+                if (keyPoints.size() >= 5) break;
+            }
+        }
+
+        if (keyPoints.isEmpty()) {
+            keyPoints.add("Nắm vững các khái niệm và thuật ngữ trọng tâm của bài học.");
+            keyPoints.add("Ghi nhớ các định nghĩa, quy tắc và chức năng chuẩn của từng thành phần.");
+            keyPoints.add("Đọc kỹ câu hỏi và các phương án trước khi chọn đáp án.");
+        }
+
+        String description = "Dưới đây là tóm tắt các khái niệm, định nghĩa và thuật ngữ cốt lõi của " + cleanTitle + ". Hãy đọc nhanh trước khi vào làm trắc nghiệm!";
+
+        return new LessonOverviewDto(
+                cleanTitle,
+                description,
+                keyPoints.stream().distinct().limit(6).toList(),
+                concepts.stream().distinct().limit(6).toList()
+        );
     }
 
     /**
