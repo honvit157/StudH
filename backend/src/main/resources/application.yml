@@ -25,8 +25,8 @@ spring:
     enabled: ${SPRING_FLYWAY_ENABLED:false}
   servlet:
     multipart:
-      max-file-size: 20MB
-      max-request-size: 25MB
+      max-file-size: 50MB
+      max-request-size: 150MB
 
 app:
   password: ${APP_PASSWORD:studyapp123}

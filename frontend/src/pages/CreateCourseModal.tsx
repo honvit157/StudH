@@ -1,6 +1,9 @@
 import React, { useState, useRef } from 'react';
 import { apiRequest } from '../api/client';
-import { X, UploadCloud, FileText, Calendar, Clock, Sparkles, CheckCircle2, AlertCircle } from 'lucide-react';
+import { 
+  X, UploadCloud, FileText, Calendar, Clock, Sparkles, 
+  CheckCircle2, AlertCircle, Plus, Trash2, Layers 
+} from 'lucide-react';
 
 interface CreateCourseModalProps {
   isOpen: boolean;
@@ -10,7 +13,7 @@ interface CreateCourseModalProps {
 
 export default function CreateCourseModal({ isOpen, onClose, onSuccess }: CreateCourseModalProps) {
   const [activeTab, setActiveTab] = useState<'file' | 'text'>('file');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [rawText, setRawText] = useState('');
   const [title, setTitle] = useState('');
   const [examDate, setExamDate] = useState('');
@@ -25,36 +28,61 @@ export default function CreateCourseModal({ isOpen, onClose, onSuccess }: Create
 
   if (!isOpen) return null;
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      if (file.size > 20 * 1024 * 1024) {
-        setError('Kích thước file vượt quá giới hạn 20MB.');
-        return;
+  const handleAddFiles = (filesList: FileList | null) => {
+    if (!filesList || filesList.length === 0) return;
+    const newFiles = Array.from(filesList);
+    const validFiles: File[] = [];
+    let hasOversized = false;
+
+    newFiles.forEach((file) => {
+      if (file.size > 50 * 1024 * 1024) {
+        hasOversized = true;
+      } else {
+        // Tránh trùng lặp tên và dung lượng
+        const exists = selectedFiles.some(
+          (f) => f.name === file.name && f.size === file.size
+        );
+        if (!exists) {
+          validFiles.push(file);
+        }
       }
-      setSelectedFile(file);
+    });
+
+    if (hasOversized) {
+      setError('Một số file vượt quá giới hạn 50MB và đã bị bỏ qua.');
+    } else {
       setError(null);
+    }
+
+    if (validFiles.length > 0) {
+      const updated = [...selectedFiles, ...validFiles];
+      setSelectedFiles(updated);
+
       if (!title) {
-        const defaultName = file.name.replace(/\.[^/.]+$/, "");
-        setTitle(defaultName);
+        if (updated.length === 1) {
+          setTitle(updated[0].name.replace(/\.[^/.]+$/, ''));
+        } else {
+          setTitle(`Bộ tài liệu ôn thi (${updated.length} tài liệu)`);
+        }
       }
     }
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handleAddFiles(e.target.files);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0];
-      if (file.size > 20 * 1024 * 1024) {
-        setError('Kích thước file vượt quá giới hạn 20MB.');
-        return;
-      }
-      setSelectedFile(file);
-      setError(null);
-      if (!title) {
-        const defaultName = file.name.replace(/\.[^/.]+$/, "");
-        setTitle(defaultName);
-      }
+    handleAddFiles(e.dataTransfer.files);
+  };
+
+  const handleRemoveFile = (indexToRemove: number) => {
+    const updated = selectedFiles.filter((_, idx) => idx !== indexToRemove);
+    setSelectedFiles(updated);
+    if (updated.length === 0 && title.startsWith('Bộ tài liệu ôn thi')) {
+      setTitle('');
     }
   };
 
@@ -64,8 +92,8 @@ export default function CreateCourseModal({ isOpen, onClose, onSuccess }: Create
       setError('Vui lòng nhập tên khóa học.');
       return;
     }
-    if (activeTab === 'file' && !selectedFile) {
-      setError('Vui lòng chọn file tài liệu (.pdf, .docx, .txt, .md).');
+    if (activeTab === 'file' && selectedFiles.length === 0) {
+      setError('Vui lòng chọn ít nhất một file tài liệu (.pdf, .docx, .txt, .md).');
       return;
     }
     if (activeTab === 'text' && !rawText.trim()) {
@@ -80,9 +108,12 @@ export default function CreateCourseModal({ isOpen, onClose, onSuccess }: Create
 
     try {
       const formData = new FormData();
-      if (activeTab === 'file' && selectedFile) {
-        formData.append('file', selectedFile);
-      } else {
+      if (activeTab === 'file' && selectedFiles.length > 0) {
+        selectedFiles.forEach((file) => {
+          formData.append('files', file);
+        });
+      }
+      if (rawText.trim()) {
         formData.append('rawText', rawText);
       }
       formData.append('title', title);
@@ -136,6 +167,10 @@ export default function CreateCourseModal({ isOpen, onClose, onSuccess }: Create
     }
   };
 
+  const totalSizeMB = (
+    selectedFiles.reduce((acc, f) => acc + f.size, 0) / (1024 * 1024)
+  ).toFixed(2);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
       <div className="w-full max-w-lg bg-white dark:bg-duo-dark-card border-2 border-slate-200 dark:border-duo-dark-border rounded-3xl p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
@@ -156,7 +191,7 @@ export default function CreateCourseModal({ isOpen, onClose, onSuccess }: Create
           </div>
           <h2 className="text-xl font-black text-slate-800 dark:text-white">Tạo Khóa Học Từ Tài Liệu</h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Tải tài liệu PDF, Word hoặc dán text để AI tự động chia lộ trình Duolingo
+            Tải lên cùng lúc nhiều tài liệu (PDF, Word, Text) để AI gộp kiến thức và xây dựng lộ trình Duolingo
           </p>
         </div>
 
@@ -189,13 +224,14 @@ export default function CreateCourseModal({ isOpen, onClose, onSuccess }: Create
               <button
                 type="button"
                 onClick={() => setActiveTab('file')}
-                className={`flex-1 py-2 text-xs font-bold rounded-xl transition ${
+                className={`flex-1 py-2 text-xs font-bold rounded-xl transition flex items-center justify-center space-x-1 ${
                   activeTab === 'file'
                     ? 'bg-white dark:bg-duo-dark-card text-slate-800 dark:text-white shadow-sm'
                     : 'text-slate-400 hover:text-slate-600'
                 }`}
               >
-                Tải file (.pdf, .docx, .txt, .md)
+                <Layers className="w-3.5 h-3.5" />
+                <span>Tải nhiều file (.pdf, .docx, .txt)</span>
               </button>
               <button
                 type="button"
@@ -212,39 +248,85 @@ export default function CreateCourseModal({ isOpen, onClose, onSuccess }: Create
 
             {/* Input File Zone */}
             {activeTab === 'file' ? (
-              <div
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-slate-300 dark:border-duo-dark-border hover:border-duo-green rounded-3xl p-6 text-center cursor-pointer transition bg-slate-50/50 dark:bg-slate-900/30"
-              >
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileChange}
-                  accept=".pdf,.docx,.txt,.md"
-                  className="hidden"
-                />
-                <div className="w-12 h-12 rounded-2xl bg-duo-green/10 text-duo-green flex items-center justify-center mx-auto mb-3">
-                  <UploadCloud className="w-6 h-6" />
-                </div>
-                {selectedFile ? (
-                  <div>
-                    <span className="font-bold text-sm text-slate-800 dark:text-white block line-clamp-1">
-                      {selectedFile.name}
-                    </span>
-                    <span className="text-xs text-slate-400">
-                      {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • Nhấn để đổi file khác
-                    </span>
+              <div className="space-y-3">
+                {/* Drag & Drop Area */}
+                <div
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="border-2 border-dashed border-slate-300 dark:border-duo-dark-border hover:border-duo-green rounded-3xl p-5 text-center cursor-pointer transition bg-slate-50/50 dark:bg-slate-900/30"
+                >
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    accept=".pdf,.docx,.txt,.md"
+                    multiple
+                    className="hidden"
+                  />
+                  <div className="w-12 h-12 rounded-2xl bg-duo-green/10 text-duo-green flex items-center justify-center mx-auto mb-2">
+                    <UploadCloud className="w-6 h-6" />
                   </div>
-                ) : (
                   <div>
                     <span className="font-bold text-sm text-slate-700 dark:text-slate-300 block">
-                      Kéo thả file vào đây hoặc bấm để chọn
+                      Kéo thả một hoặc nhiều file vào đây
                     </span>
                     <span className="text-xs text-slate-400 mt-1 block">
-                      Hỗ trợ PDF (có text), Word .docx, .txt, .md (Tối đa 20MB)
+                      Hỗ trợ chọn nhiều file PDF, Word .docx, .txt, .md cùng lúc (Tối đa 50MB/file)
                     </span>
+                  </div>
+                </div>
+
+                {/* Danh sách các file đã chọn */}
+                {selectedFiles.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                        Đã chọn {selectedFiles.length} tài liệu ({totalSizeMB} MB)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="text-xs font-bold text-duo-green hover:underline flex items-center space-x-1"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Thêm file khác</span>
+                      </button>
+                    </div>
+
+                    <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1">
+                      {selectedFiles.map((file, idx) => (
+                        <div
+                          key={`${file.name}-${idx}`}
+                          className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-duo-dark-border text-xs"
+                        >
+                          <div className="flex items-center space-x-2.5 min-w-0 flex-1 mr-2">
+                            <div className="w-7 h-7 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-duo-green flex items-center justify-center flex-shrink-0">
+                              <FileText className="w-4 h-4" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="font-bold text-slate-800 dark:text-slate-200 truncate">
+                                {file.name}
+                              </div>
+                              <div className="text-[10px] text-slate-400">
+                                {(file.size / (1024 * 1024)).toFixed(2)} MB
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveFile(idx);
+                            }}
+                            className="p-1 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition flex-shrink-0"
+                            title="Xóa file này"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

@@ -41,14 +41,22 @@ public class CourseController {
 
     @PostMapping(value = "/courses", consumes = {"multipart/form-data"})
     public ResponseEntity<Map<String, Object>> createCourse(
+            @RequestParam(value = "files", required = false) List<MultipartFile> files,
             @RequestParam(value = "file", required = false) MultipartFile file,
             @RequestParam(value = "rawText", required = false) String rawText,
             @RequestParam("title") String title,
             @RequestParam(value = "examDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate examDate,
             @RequestParam(value = "dailyMinutes", defaultValue = "20") int dailyMinutes
     ) {
+        List<MultipartFile> allFiles = new java.util.ArrayList<>();
+        if (files != null) {
+            allFiles.addAll(files);
+        }
+        if (file != null && !allFiles.contains(file)) {
+            allFiles.add(file);
+        }
         UUID taskId = pipelineService.initTask();
-        pipelineService.processCourseCreation(taskId, file, rawText, title, examDate, dailyMinutes);
+        pipelineService.processCourseCreation(taskId, allFiles, rawText, title, examDate, dailyMinutes);
         return ResponseEntity.ok(Map.of("taskId", taskId));
     }
 
