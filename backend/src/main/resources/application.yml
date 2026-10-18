@@ -11,20 +11,18 @@ spring:
   application:
     name: studyapp-backend
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/studyapp}
-    username: ${SPRING_DATASOURCE_USERNAME:studyapp}
-    password: ${SPRING_DATASOURCE_PASSWORD:studyapp_password}
-    driver-class-name: org.postgresql.Driver
+    url: ${SPRING_DATASOURCE_URL:jdbc:h2:file:./data/studyapp;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;AUTO_SERVER=TRUE}
+    username: ${SPRING_DATASOURCE_USERNAME:sa}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    driver-class-name: ${SPRING_DATASOURCE_DRIVER:org.h2.Driver}
   jpa:
     hibernate:
-      ddl-auto: validate
+      ddl-auto: update
     properties:
       hibernate:
         format_sql: false
-        dialect: org.hibernate.dialect.PostgreSQLDialect
   flyway:
-    enabled: true
-    locations: classpath:db/migration
+    enabled: ${SPRING_FLYWAY_ENABLED:false}
   servlet:
     multipart:
       max-file-size: 20MB

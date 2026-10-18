@@ -4,6 +4,7 @@ import com.studyapp.dto.AuthResponse;
 import com.studyapp.dto.LoginRequest;
 import com.studyapp.security.LoginRateLimiter;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,7 +14,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
+import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Collections;
@@ -27,13 +28,17 @@ public class AuthController {
     private String appPassword;
 
     private final LoginRateLimiter rateLimiter;
+    private final SecurityContextRepository securityContextRepository;
 
-    public AuthController(LoginRateLimiter rateLimiter) {
+    public AuthController(LoginRateLimiter rateLimiter, SecurityContextRepository securityContextRepository) {
         this.rateLimiter = rateLimiter;
+        this.securityContextRepository = securityContextRepository;
     }
 
     @PostMapping("/login")
-    public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request, HttpServletRequest httpRequest) {
+    public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request,
+                                             HttpServletRequest httpRequest,
+                                             HttpServletResponse httpResponse) {
         String clientIp = getClientIp(httpRequest);
 
         if (rateLimiter.isBlocked(clientIp)) {
@@ -60,8 +65,7 @@ public class AuthController {
         securityContext.setAuthentication(authentication);
         SecurityContextHolder.setContext(securityContext);
 
-        HttpSession session = httpRequest.getSession(true);
-        session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, securityContext);
+        securityContextRepository.saveContext(securityContext, httpRequest, httpResponse);
 
         return ResponseEntity.ok(new AuthResponse(true, "Đăng nhập thành công!"));
     }
