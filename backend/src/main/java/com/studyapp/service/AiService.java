@@ -88,16 +88,19 @@ public class AiService {
     public GeneratedOutline generateOutline(String rawText) throws Exception {
         semaphore.acquire();
         try {
+            String cleanedText = cleanFrontMatterAndBoilerplate(rawText);
+            String textToProcess = (cleanedText.length() >= 50) ? cleanedText : rawText;
+
             String activeGeminiKey = getEffectiveGeminiKey();
             if (!activeGeminiKey.isBlank()) {
-                GeneratedOutline outline = callGeminiForOutline(rawText, activeGeminiKey);
+                GeneratedOutline outline = callGeminiForOutline(textToProcess, activeGeminiKey);
                 if (outline != null && outline.units() != null && !outline.units().isEmpty()) {
                     return outline;
                 }
             } else if (!anthropicApiKey.isBlank()) {
-                return callClaudeForOutline(rawText);
+                return callClaudeForOutline(textToProcess);
             }
-            return buildStructuralOutlineFallback(rawText);
+            return buildStructuralOutlineFallback(textToProcess);
         } finally {
             semaphore.release();
         }
@@ -291,8 +294,6 @@ public class AiService {
     public GeneratedOutline buildStructuralOutlineFallback(String text) {
         List<GeneratedUnit> units = new ArrayList<>();
 
-
-
         // 1. Nếu tài liệu là Ngân hàng câu hỏi trắc nghiệm (như Eduso, PDF trắc nghiệm)
         List<GeneratedItem> allExamQuestions = extractAllExamQuestions(text);
         if (allExamQuestions.size() >= 4) {
@@ -317,17 +318,21 @@ public class AiService {
                 int contentStart = docSpans.get(i)[1];
                 int contentEnd = (i + 1 < docSpans.size()) ? docSpans.get(i + 1)[0] : text.length();
                 String docText = text.substring(contentStart, contentEnd).trim();
-                String unitTitle = "Chương " + (i + 1) + ": " + docTitles.get(i);
-                units.add(buildUnitFromText(unitTitle, docText, i + 1));
+                String cleanedDoc = cleanFrontMatterAndBoilerplate(docText);
+                if (cleanedDoc.length() < 60) continue; // Bỏ qua file rác chỉ có thông tin xuất bản
+                String unitTitle = "Chương " + (units.size() + 1) + ": " + docTitles.get(i);
+                units.add(buildUnitFromText(unitTitle, cleanedDoc, units.size() + 1));
             }
-            return new GeneratedOutline(units);
+            if (!units.isEmpty()) {
+                return new GeneratedOutline(units);
+            }
         }
 
-        // 3. Nếu là tài liệu đơn lẻ: Lọc bỏ các dòng tiêu đề bảng / header lặp lại nhiều lần
-        String cleanedText = cleanRepeatedHeaders(text);
+        // 3. Nếu là tài liệu đơn lẻ: Lọc bỏ các dòng bản quyền và header lặp lại nhiều lần
+        String cleanedText = cleanRepeatedHeaders(cleanFrontMatterAndBoilerplate(text));
 
-        // Tìm các đề mục Chương / Phần thực sự
-        Pattern chapterPattern = Pattern.compile("(?im)^(?:Chương|Phần|Unit|Module)\\s*([0-9IVX]+)[\\.:\\s\\-]+(.+)$");
+        // Tìm các đề mục Chương / Phần thực sự (hỗ trợ cả tiếng Việt và tiếng Anh Chapter)
+        Pattern chapterPattern = Pattern.compile("(?im)^(?:Chương|Phần|Unit|Module|Chapter|CHAPTER|BÀI|Bài)\\s*([0-9IVX]+)[\\.:\\s\\-]+(.+)$");
         Matcher chapMatcher = chapterPattern.matcher(cleanedText);
         List<int[]> chapSpans = new ArrayList<>();
         List<String> chapTitles = new ArrayList<>();
@@ -358,6 +363,61 @@ public class AiService {
         return new GeneratedOutline(units);
     }
 
+    public static String cleanFrontMatterAndBoilerplate(String text) {
+        if (text == null || text.isBlank()) return "";
+
+        // 1. Nếu văn bản có chứa cấu trúc sách/giáo trình với các trang bìa/bản quyền ở đầu
+        // Tìm điểm xuất phát thực sự của nội dung học thuật
+        Pattern contentStartPattern = Pattern.compile("(?im)^(?:Chapter|Chương|Phần|Unit|BÀI|Bài)\\s*1\\b.*|(?im)^1\\.\\s+[A-Za-zÀ-ỹ].*|(?im)^1\\.1\\b.*|(?im)^(?:Câu|Question)\\s*1\\s*[:\\.]");
+        Matcher startMatcher = contentStartPattern.matcher(text);
+        if (startMatcher.find()) {
+            int startIdx = startMatcher.start();
+            // Nếu điểm bắt đầu nằm sau một đoạn front matter (dưới 80.000 ký tự), bỏ qua toàn bộ front matter
+            if (startIdx > 100 && startIdx < 80000) {
+                text = text.substring(startIdx);
+            }
+        }
+
+        // 2. Lọc bỏ các dòng bản quyền, metadata thư viện, nhà xuất bản, người biên tập
+        String[] lines = text.split("\r?\n");
+        StringBuilder sb = new StringBuilder();
+        for (String line : lines) {
+            String tr = line.trim();
+            if (tr.isEmpty()) continue;
+
+            // Lọc mã thư viện Quốc hội, CIP, ISBN
+            if (tr.matches("(?i)^.*(?:Library of Congress|Cataloging-in-Publication|TK\\d{4,}|LCCN).*$")) continue;
+            if (tr.matches("(?i)^.*(?:ISBN-10|ISBN-13|ISSN|978-\\d).*$")) continue;
+
+            // Lọc thông tin xuất bản, in ấn, font chữ, bản quyền
+            if (tr.matches("(?i)^.*(?:All rights reserved|Printed in the United States|Pearson Education).*$")) continue;
+            if (tr.matches("(?i)^.*(?:Editorial Director|Editor in Chief|Marketing Manager|Marketing Coordinator|Director of Production|Managing Editor|Senior Production Project Manager|Manufacturing Manager|Operations Specialist|Art Director|Text Designer|Cover Designer|Display font is|This book was composed).*$")) continue;
+
+            // Lọc lời đề tặng
+            if (tr.matches("(?i)^.*(?:Dedicated to|To Julie and|In memory of).*$")) continue;
+
+            // Lọc tên tác giả/địa danh xuất bản đứng trơ trọi một dòng
+            if (tr.matches("(?i)^(?:James F\\. Kurose|Keith W\\. Ross|Upper Saddle River|Boston Columbus Indianapolis New York).*$")) continue;
+
+            sb.append(line).append("\n");
+        }
+        return sb.toString().trim();
+    }
+
+    public static boolean isAcademicHeading(String title) {
+        if (title == null || title.isBlank()) return false;
+        String t = title.trim();
+        // Loại bỏ mã thư viện, số ISBN, ISSN, mã số sách
+        if (t.matches("(?i).*(?:TK\\d+|ISBN|LCCN|978-|ISSN|\\bCIP\\b).*")) return false;
+        // Loại bỏ vai trò xuất bản / thiết kế
+        if (t.matches("(?i).*(?:Designer|Director|Editor|Manager|Production|Specialist|Copyright|Rights Reserved|Printed in|font is|composed in|Upper Saddle River).*")) return false;
+        // Loại bỏ tên tác giả hoặc lời đề tặng đứng đơn lẻ
+        if (t.matches("(?i).*(?:James F\\. Kurose|Keith W\\. Ross|Joyce Cosentino|Marcia Horton|Michael Hirsch|Emma Snider|To Julie).*")) return false;
+        // Phải chứa ít nhất 1 chữ cái hợp lệ
+        if (!t.matches(".*[A-Za-zÀ-ỹ].*")) return false;
+        return true;
+    }
+
     private String cleanRepeatedHeaders(String text) {
         String[] lines = text.split("\r?\n");
         Map<String, Integer> lineCounts = new HashMap<>();
@@ -384,7 +444,7 @@ public class AiService {
         String[] lines = text.split("\r?\n");
         for (String l : lines) {
             String tr = l.trim();
-            if (tr.length() > 6 && tr.length() < 70 && !tr.startsWith("===") && !tr.matches("^[0-9\\.\\-\\s]+$")) {
+            if (tr.length() > 6 && tr.length() < 70 && !tr.startsWith("===") && !tr.matches("^[0-9\\.\\-\\s]+$") && isAcademicHeading(tr)) {
                 return "Chương 1: " + tr.replaceFirst("^(?:Môn|Giáo trình|Tài liệu|Học phần)\\s*[:\\-]?\\s*", "");
             }
         }
@@ -441,9 +501,10 @@ public class AiService {
         for (String rawLine : lines) {
             String line = rawLine.trim();
             if (line.isEmpty() || line.startsWith("===")) continue;
+            if (!isAcademicHeading(line)) continue;
 
             // Kiểm tra heading thực sự (loại bỏ hoàn toàn các lựa chọn A, B, C, D)
-            boolean isHeading = line.matches("(?i)^(?:Mục|Chủ đề|Section|Bài|Phần|Chuyên đề)\\s*([0-9IVX\\.]+)?[:\\-\\s]+[A-Za-zÀ-ỹ].*")
+            boolean isHeading = line.matches("(?i)^(?:Mục|Chủ đề|Section|Bài|Phần|Chuyên đề|Chapter)\\s*([0-9IVX\\.]+)?[:\\-\\s]+[A-Za-zÀ-ỹ].*")
                     || line.matches("^[0-9IVX]+\\.[0-9IVX]*\\s+[A-Za-zÀ-ỹ].*");
 
             if (isHeading && line.length() < 80) {
@@ -481,17 +542,17 @@ public class AiService {
     }
 
     private String formatLessonTitle(int counter, String topicTitle, String snippet) {
-        if (topicTitle != null && !topicTitle.isBlank() && topicTitle.length() < 50) {
+        if (topicTitle != null && !topicTitle.isBlank() && topicTitle.length() < 70 && isAcademicHeading(topicTitle)) {
             return "Bài " + counter + ": " + topicTitle;
         }
         String[] lines = snippet.split("\n");
         for (String l : lines) {
-            String tr = l.trim();
-            if (tr.length() > 5 && tr.length() < 45 && !tr.matches("^[0-9\\.\\-\\s]+$") && !tr.matches("^[A-D][\\.:\\)].*")) {
-                return "Bài " + counter + ": " + tr.replaceFirst("^[#\\*\\-\\s]+", "");
+            String tr = l.trim().replaceFirst("^[#\\*\\-\\s]+", "");
+            if (tr.length() > 6 && tr.length() < 60 && !tr.matches("^[0-9\\.\\-\\s]+$") && !tr.matches("^[A-D][\\.:\\)].*") && isAcademicHeading(tr)) {
+                return "Bài " + counter + ": " + tr;
             }
         }
-        return "Bài " + counter + ": Chuyên đề " + counter;
+        return "Bài " + counter + ": Kiến thức trọng tâm " + counter;
     }
 
     /**
@@ -523,55 +584,86 @@ public class AiService {
                 String answer = cleanChoiceText(item.getAnswer());
                 if (prompt == null || answer == null || answer.isBlank()) continue;
 
-                // Chuẩn hóa prompt bỏ prefix Câu 1:, Question 1:, v.v.
+                // Bỏ qua các câu hỏi/đáp án rác từ metadata xuất bản
+                if (answer.matches("(?i)^(?:ISBN.*|This|Display|Upper Saddle River|Pearson|Marcia Horton|Emma Snider|Keith W\\. Ross|James F\\. Kurose|978-.*)$")) {
+                    continue;
+                }
+                if (prompt.matches("(?i).*(?:book was composed|font is Berkeley|ISBN-13|ISBN-10|Library of Congress).*")) {
+                    continue;
+                }
+
+                // Chuẩn hóa prompt bỏ prefix Câu 1:, Question 1:, các nhãn mức độ câu hỏi, v.v.
                 String pText = prompt.replaceFirst("^(?i)(?:Câu|Question|Bài|Item)\\s*\\d+[:\\.\\s]+", "")
-                        .replaceFirst("(?i)^[A-Za-z0-9À-ỹ\\s]+(?:MMT|Internet|Mạng)\\s*", "")
+                        .replaceFirst("(?i)^(?:độ câu hỏi|mức độ câu hỏi|chủ đề|chuyên đề|phần)[:\\s\\-]+[A-Za-z0-9À-ỹ\\s]+", "")
+                        .replaceFirst("(?i)^Tổng quan về [A-Za-z0-9À-ỹ\\s]+(?:Internet|Mạng|MMT|Web|Hệ thống)\\s*", "")
                         .trim();
 
                 // Dạng Đúng / Sai
                 if (answer.equalsIgnoreCase("Đúng") || answer.equalsIgnoreCase("Sai")) {
-                    String cleanP = pText.replaceFirst("\\?$", ".");
-                    if (answer.equalsIgnoreCase("Đúng")) {
-                        keyPoints.add("Khẳng định chuẩn: " + cleanP);
-                    } else {
-                        keyPoints.add("Lưu ý (Phát biểu SAI): " + cleanP);
+                    String cleanP = pText.replaceFirst("\\?$", "").trim();
+                    if (!cleanP.isEmpty()) {
+                        if (answer.equalsIgnoreCase("Đúng")) {
+                            keyPoints.add("Khẳng định chuẩn: " + cleanP + ".");
+                        } else {
+                            keyPoints.add("Lưu ý (Phát biểu SAI): " + cleanP + ".");
+                        }
                     }
                     continue;
                 }
 
-                // Dạng viết tắt thuật ngữ (VD: LAN, IANA, HTTP...)
-                Matcher acronymMatcher = Pattern.compile("\\b([A-Z0-9]{2,10})\\b.*(?:viết tắt|là gì|có nghĩa là|cụm từ nào)", Pattern.CASE_INSENSITIVE).matcher(pText);
-                if (acronymMatcher.find()) {
-                    String term = acronymMatcher.group(1);
-                    concepts.add(new LessonOverviewDto.ConceptItemDto(
-                            term,
-                            "Viết tắt của: " + answer + (item.getExplanation() != null ? " (" + cleanChoiceText(item.getExplanation()) + ")" : ""),
-                            "Thuật ngữ"
-                    ));
-                    keyPoints.add(term + " = " + answer);
-                    continue;
+                // Dạng câu hỏi viết tắt thuật ngữ (VD: LAN, IANA, HTTP, TCP, DNS...)
+                if (pText.toLowerCase().contains("viết tắt")) {
+                    // Matcher chữ in hoa chuẩn, KHÔNG dùng CASE_INSENSITIVE để không nhầm chữ tiếng Việt như "Thu", "ti"
+                    Matcher acronymMatcher = Pattern.compile("\\b([A-Z0-9]{2,10})\\b").matcher(pText);
+                    String foundAcronym = null;
+                    while (acronymMatcher.find()) {
+                        String cand = acronymMatcher.group(1);
+                        if (!cand.matches("^(?:MMT|CÂU|BÀI|ITEM|QUESTION|ĐÚNG|SAI)$")) {
+                            foundAcronym = cand;
+                            break;
+                        }
+                    }
+                    if (foundAcronym != null) {
+                        concepts.add(new LessonOverviewDto.ConceptItemDto(
+                                foundAcronym,
+                                "Viết tắt của: " + answer + (item.getExplanation() != null ? " (" + cleanChoiceText(item.getExplanation()) + ")" : ""),
+                                "Thuật ngữ"
+                        ));
+                        keyPoints.add(foundAcronym + " = " + answer);
+                        continue;
+                    }
                 }
 
                 // Dạng định nghĩa (được gọi là, định nghĩa là, có chức năng...)
                 if (pText.matches("(?i).*(được gọi là|chính là|định nghĩa là|có chức năng|vai trò là).*")) {
                     String coreDef = pText.replaceFirst("(?i)\\s*(?:được gọi là|chính là|định nghĩa là)[:\\?\\s]*$", "").trim();
-                    concepts.add(new LessonOverviewDto.ConceptItemDto(
-                            answer,
-                            coreDef,
-                            "Định nghĩa"
-                    ));
-                    keyPoints.add(answer + ": " + coreDef);
-                    continue;
+                    if (coreDef.length() >= 10 && !coreDef.contains("[ ... ]")) {
+                        concepts.add(new LessonOverviewDto.ConceptItemDto(
+                                answer,
+                                coreDef,
+                                "Định nghĩa"
+                        ));
+                        keyPoints.add(answer + ": " + coreDef);
+                        continue;
+                    }
                 }
 
-                // Dạng khái niệm tổng quát
-                String shortQ = pText.length() > 65 ? pText.substring(0, 65) + "..." : pText;
-                concepts.add(new LessonOverviewDto.ConceptItemDto(
-                        answer,
-                        pText.replaceFirst("\\?$", "") + " → " + answer,
-                        "Trọng tâm"
-                ));
-                keyPoints.add(shortQ.replaceFirst("\\?$", "") + " → " + answer);
+                // Dạng câu hỏi trắc nghiệm thông thường -> Chuyển thành nhận định kiến thức chuẩn
+                String cleanQ = pText.replaceFirst("(?i)^(?:Đâu là|Khái niệm nào|Giao thức nào|Thành phần nào|Thiết bị nào|Tầng nào|Đơn vị nào|Tên của|Khi nghiên cứu về [^,]+, phát biểu nào sau đây là CHÍNH XÁC\\?|Theo tài liệu bài học, khái niệm nào sau đây mô tả chính xác về [^\\?]+\\?)\\s*", "")
+                        .replaceFirst("(?i)\\s*(?:là gì|như thế nào|ở đâu|bao nhiêu|nào)[:\\?]*$", "")
+                        .replaceFirst("\\?$", "")
+                        .trim();
+
+                if (!cleanQ.isBlank() && !cleanQ.contains("[ ... ]")) {
+                    String statement;
+                    if (cleanQ.length() > 60) {
+                        statement = answer + ": " + cleanQ.substring(0, 60) + "...";
+                    } else {
+                        statement = answer + ": " + cleanQ;
+                    }
+                    keyPoints.add(statement);
+                    concepts.add(new LessonOverviewDto.ConceptItemDto(answer, cleanQ, "Trọng tâm"));
+                }
             }
         }
 
@@ -582,12 +674,13 @@ public class AiService {
                 String tr = s.trim();
                 if (tr.length() < 25 || tr.length() > 180) continue;
                 if (tr.startsWith("===") || tr.matches("^[0-9A-D\\.\\-\\s:]+$")) continue;
+                if (!isAcademicHeading(tr)) continue;
 
                 Matcher defMatcher = Pattern.compile("(?i)^([A-Za-z0-9À-ỹ\\s/_-]{2,35}?)\\s+(?:là|được hiểu là|được định nghĩa là|dùng để|có chức năng)\\s+(.+)$").matcher(tr);
                 if (defMatcher.find()) {
                     String term = defMatcher.group(1).trim();
                     String def = defMatcher.group(2).trim();
-                    if (!term.equalsIgnoreCase("đây") && !term.equalsIgnoreCase("đó") && def.length() > 10) {
+                    if (!term.equalsIgnoreCase("đây") && !term.equalsIgnoreCase("đó") && def.length() > 10 && isAcademicHeading(term)) {
                         concepts.add(new LessonOverviewDto.ConceptItemDto(term, def, "Khái niệm"));
                         keyPoints.add(term + ": " + def);
                     }
@@ -819,7 +912,6 @@ public class AiService {
         List<ConceptDef> definitions = new ArrayList<>();
         List<ConceptDef> functions = new ArrayList<>();
         List<String> keySentences = new ArrayList<>();
-        Set<String> technicalTerms = new LinkedHashSet<>();
 
         String[] rawSentences = text.split("[\\n\\.;]+");
         for (String raw : rawSentences) {
@@ -827,33 +919,27 @@ public class AiService {
             if (s.length() < 20 || s.length() > 220) continue;
             if (s.startsWith("===") || s.matches("^[0-9\\.\\-\\s]+$")) continue;
 
+            // Bỏ qua câu chứa thông tin xuất bản, bản quyền, mã thư viện
+            if (!isAcademicHeading(s)) continue;
+
             keySentences.add(s);
 
-            // Tìm từ viết hoa thuật ngữ
-            Matcher termMatcher = Pattern.compile("\\b([A-Z0-9]{2,10}|[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)?)\\b").matcher(s);
-            while (termMatcher.find()) {
-                String t = termMatcher.group(1).trim();
-                if (t.length() >= 2 && !t.equalsIgnoreCase("VÀ") && !t.equalsIgnoreCase("CHO") && !t.equalsIgnoreCase("KHI")) {
-                    technicalTerms.add(t);
-                }
-            }
-
-            // Định nghĩa
+            // Định nghĩa (Khái niệm là...)
             Matcher defMatcher = Pattern.compile("(?i)^([A-Za-z0-9À-ỹ\\s/_-]{2,45}?)\\s+(?:là|được hiểu là|được định nghĩa là)\\s+(.+)$").matcher(s);
             if (defMatcher.find()) {
                 String term = defMatcher.group(1).trim();
                 String def = defMatcher.group(2).trim();
-                if (def.length() >= 15 && !term.equalsIgnoreCase("đây") && !term.equalsIgnoreCase("đó")) {
+                if (def.length() >= 15 && !term.equalsIgnoreCase("đây") && !term.equalsIgnoreCase("đó") && isAcademicHeading(term)) {
                     definitions.add(new ConceptDef(term, def, s));
                 }
             }
 
-            // Chức năng
+            // Chức năng (Thành phần có chức năng/vai trò...)
             Matcher funcMatcher = Pattern.compile("(?i)^([A-Za-z0-9À-ỹ\\s/_-]{2,45}?)\\s+(?:có chức năng|dùng để|được dùng để|có nhiệm vụ|đóng vai trò)\\s+(.+)$").matcher(s);
             if (funcMatcher.find()) {
                 String term = funcMatcher.group(1).trim();
                 String func = funcMatcher.group(2).trim();
-                if (func.length() >= 15) {
+                if (func.length() >= 15 && isAcademicHeading(term)) {
                     functions.add(new ConceptDef(term, func, s));
                 }
             }
@@ -873,7 +959,6 @@ public class AiService {
                 }
             }
 
-            // Bounded for loop: tuyệt đối không dùng while vô hạn
             for (String alt : keySentences) {
                 if (distractors.size() >= 3) break;
                 String cap = capitalizeFirst(alt);
@@ -908,7 +993,6 @@ public class AiService {
                 }
             }
 
-            // Bounded for loop
             for (String alt : keySentences) {
                 if (distractors.size() >= 3) break;
                 String cap = capitalizeFirst(alt);
@@ -929,43 +1013,8 @@ public class AiService {
             ));
         }
 
-        // 3. Tạo câu hỏi Điền từ khóa vào chỗ trống (Cloze Test)
-        List<String> termsList = new ArrayList<>(technicalTerms);
-        if (termsList.size() >= 4) {
-            for (String sentence : keySentences) {
-                if (items.size() >= 6) break;
-                for (String term : termsList) {
-                    if (sentence.contains(term) && term.length() >= 3 && sentence.length() > term.length() + 15) {
-                        String blanked = sentence.replaceFirst(Pattern.quote(term), "[ ... ]");
-                        String prompt = "Điền thuật ngữ chính xác vào chỗ trống:\n\"" + blanked + "\"";
-                        String answer = term;
-
-                        List<String> distractors = new ArrayList<>();
-                        for (String otherTerm : termsList) {
-                            if (!otherTerm.equalsIgnoreCase(term)) {
-                                distractors.add(otherTerm);
-                                if (distractors.size() >= 3) break;
-                            }
-                        }
-
-                        fillFallbackDistractors(distractors);
-
-                        items.add(new GeneratedItem(
-                                prompt,
-                                "Kiểm tra mức độ ghi nhớ thuật ngữ chuyên ngành:",
-                                answer,
-                                distractors.subList(0, 3),
-                                "Thuật ngữ chính xác là \"" + term + "\". Toàn bộ nội dung: \"" + sentence + "\".",
-                                sentence.substring(0, Math.min(sentence.length(), 50))
-                        ));
-                        break;
-                    }
-                }
-            }
-        }
-
-        // 4. Nếu vẫn còn ít câu hỏi, tạo câu hỏi Nhận định chính xác dựa trên các câu trích thực tế
-        for (int i = 0; i < keySentences.size() && items.size() < 5; i++) {
+        // 3. Tạo câu hỏi Nhận định chính xác dựa trên các câu trích thực tế (Loại bỏ hoàn toàn cloze test ngẫu nhiên)
+        for (int i = 0; i < keySentences.size() && items.size() < 6; i++) {
             String targetSentence = keySentences.get(i);
             String prompt = "Khi nghiên cứu về \"" + lessonTitle + "\", phát biểu nào sau đây là CHÍNH XÁC?";
             String answer = capitalizeFirst(targetSentence);

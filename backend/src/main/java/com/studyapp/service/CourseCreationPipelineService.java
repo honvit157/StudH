@@ -75,7 +75,7 @@ public class CourseCreationPipelineService {
 
             String courseTitle = (title != null && !title.isBlank()) ? title : "Khóa học tài liệu mới";
             Course course = new Course(courseTitle, examDate, dailyMinutes);
-            course.setRawText(fullText.length() > 50000 ? fullText.substring(0, 50000) : fullText);
+            course.setRawText(fullText.length() > 5000000 ? fullText.substring(0, 5000000) : fullText);
             courseRepository.save(course);
 
             // Gọi AI tạo mục lục
@@ -199,70 +199,40 @@ public class CourseCreationPipelineService {
     @Transactional
     public void autoRepairExistingData() {
         try {
-            List<Course> courses = courseRepository.findAll();
-            for (Course course : courses) {
-                if (course.getRawText() == null || course.getRawText().isBlank()) continue;
+            // 1. Quét và dọn dẹp các câu hỏi trắc nghiệm rác về ISBN, This, Display hoặc metadata xuất bản
+            List<Item> allItems = itemRepository.findAll();
+            int deletedJunkCount = 0;
+            for (Item item : allItems) {
+                String ans = item.getAnswer() != null ? item.getAnswer().trim() : "";
+                String prompt = item.getPrompt() != null ? item.getPrompt() : "";
 
-                List<Unit> units = unitRepository.findByCourseIdOrderBySortOrderAsc(course.getId());
-                boolean hasCorrupted = false;
-                for (Unit u : units) {
-                    for (Section s : sectionRepository.findByUnitIdOrderBySortOrderAsc(u.getId())) {
-                        for (Lesson l : lessonRepository.findBySectionIdOrderBySortOrderAsc(s.getId())) {
-                            if (l.getSourceText() != null && (l.getSourceText().contains("(đúng)")
-                                    || l.getSourceText().contains("cụm từ nào?")
-                                    || l.getSourceText().contains("được gọi là")
-                                    || l.getSourceText().contains("độ câu hỏi")
-                                    || l.getSourceText().contains("Giải thích đáp án")
-                                    || l.getSourceText().contains("Câu 4: cụm từ nào?"))) {
-                                hasCorrupted = true;
-                                break;
-                            }
-                        }
-                    }
+                boolean isJunk = ans.matches("(?i)^(?:ISBN.*|This|Display|Upper Saddle River|Pearson|Marcia Horton|Emma Snider|Keith W\\. Ross|James F\\. Kurose|978-.*)$")
+                        || prompt.contains("book was composed")
+                        || prompt.contains("font is Berkeley")
+                        || prompt.contains("ISBN-13")
+                        || prompt.contains("ISBN-10");
+
+                if (isJunk) {
+                    itemStateRepository.deleteById(item.getId());
+                    itemRepository.delete(item);
+                    deletedJunkCount++;
                 }
+            }
+            if (deletedJunkCount > 0) {
+                System.out.println("Cleaned " + deletedJunkCount + " junk boilerplate items from database.");
+            }
 
-                if (hasCorrupted) {
-                    System.out.println("Auto-repairing corrupted course data: " + course.getTitle());
-                    AiService.GeneratedOutline freshOutline = aiService.generateOutline(course.getRawText());
-
-                    List<Lesson> allExistingLessons = new ArrayList<>();
-                    for (Unit u : units) {
-                        for (Section s : sectionRepository.findByUnitIdOrderBySortOrderAsc(u.getId())) {
-                            allExistingLessons.addAll(lessonRepository.findBySectionIdOrderBySortOrderAsc(s.getId()));
-                        }
-                    }
-
-                    List<AiService.GeneratedLesson> freshLessons = new ArrayList<>();
-                    for (AiService.GeneratedUnit fu : freshOutline.units()) {
-                        for (AiService.GeneratedSection fs : fu.sections()) {
-                            freshLessons.addAll(fs.lessons());
-                        }
-                    }
-
-                    for (int i = 0; i < Math.min(allExistingLessons.size(), freshLessons.size()); i++) {
-                        Lesson oldL = allExistingLessons.get(i);
-                        AiService.GeneratedLesson freshL = freshLessons.get(i);
-                        oldL.setTitle(freshL.title());
-                        oldL.setSourceText(freshL.sourceText());
-                        lessonRepository.save(oldL);
-
-                        List<Item> oldItems = itemRepository.findByLessonId(oldL.getId());
-                        for (Item oi : oldItems) {
-                            itemStateRepository.deleteById(oi.getId());
-                        }
-                        itemRepository.deleteAll(oldItems);
-
-                        try {
-                            generateItemsForLesson(oldL.getId());
-                        } catch (Exception ex) {
-                            System.err.println("Could not regenerate items for lesson " + oldL.getId() + ": " + ex.getMessage());
-                        }
-                    }
-                    System.out.println("Course data repaired successfully!");
+            // 2. Quét và đổi tên các bài học bị đặt tên theo mã thư viện hoặc metadata xuất bản
+            List<Lesson> allLessons = lessonRepository.findAll();
+            for (Lesson l : allLessons) {
+                String title = l.getTitle() != null ? l.getTitle() : "";
+                if (!AiService.isAcademicHeading(title)) {
+                    l.setTitle("Bài " + l.getSortOrder() + ": Kiến thức chuyên đề " + l.getSortOrder());
+                    lessonRepository.save(l);
                 }
             }
         } catch (Exception e) {
-            System.err.println("Error during auto-repair: " + e.getMessage());
+            System.err.println("Error during safe repair: " + e.getMessage());
         }
     }
 
