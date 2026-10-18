@@ -11,6 +11,10 @@ Tài liệu theo dõi quá trình thực hiện tuần tự các bước trong *
 - [x] **Bước 3**: API phiên học (today / answer / finish) và màn hình phiên học: thẻ giới thiệu, trắc nghiệm, hàng đợi lặp lại, màn kết quả.
 - [x] **Bước 4**: XP, streak, mục tiêu ngày, trang chủ, thống kê cơ bản.
 - [x] **Bước 5**: Đường học (Unit/Section/Lesson), lịch, thuật toán xếp lịch và dồn lịch.
+- [x] **Bước 6**: Trích xuất tài liệu (PDFBox, POI) & AI Client (Gemini / Claude API, JSON Schema validation, retry 2 lần, giới hạn 2 tác vụ đồng thời).
+- [x] **Bước 7**: Pipeline tạo khóa học tự động, phân tích ngân hàng câu hỏi đề thi, lazy generation và bài kiểm tra đầu vào (Placement Test).
+- [x] **Bước 8**: Màn hình Cài đặt, sao lưu/khôi phục JSON, Progressive Web App (PWA), Web Audio sound & Haptic feedback.
+- [x] **Bước 9**: Đóng gói Container đa tầng (Multi-stage Dockerfile), Docker Compose cô lập an toàn & Hướng dẫn triển khai đám mây 0đ.
 
 ---
 
@@ -95,20 +99,62 @@ Tài liệu theo dõi quá trình thực hiện tuần tự các bước trong *
 
 ---
 
-## Tổng Kết Kết Quả Kiểm Thử (Toàn Bộ 17/17 Test Đều Pass 100%)
+### Bước 6: Trích Xuất Tài Liệu & AI Client Đa Mô Hình (Gemini & Claude)
+- **Đã làm**:
+  - `DocumentExtractionService`: Hỗ trợ đọc tài liệu PDF (Apache PDFBox), tài liệu Word `.docx` (Apache POI), và đọc stream trực tiếp `.txt`, `.md`. Tự động phát hiện PDF ảnh quét không có text.
+  - `AiService`: Hỗ trợ đa mô hình (Google Gemini API & Anthropic Claude Messages API).
+  - Ép chuẩn JSON Schema, kiểm tra và làm sạch Markdown json block, Bean Validation.
+  - Tự động thử lại (retry 2 lần) và Semaphore giới hạn tối đa 2 tác vụ AI chạy song song để tránh nghẽn.
+  - Bộ kiểm thử `DocumentExtractionServiceTest` pass 3/3 test.
+
+---
+
+### Bước 7: Pipeline Tạo Khóa Học Tự Động & Bài Kiểm Tra Đầu Vào
+- **Đã làm**:
+  - `CourseCreationPipelineService`: Tự động chia đoạn tài liệu dài, gọi AI tạo cây Unit -> Section -> Lesson.
+  - Phân tích và nhận diện ngân hàng câu hỏi đề thi (mẫu Eduso, form trắc nghiệm ABCD kèm đáp án/giải thích).
+  - Cơ chế sinh câu hỏi theo yêu cầu (Lazy generation): Sinh 5-8 Item cho bài học khi người dùng bắt đầu học bài đó.
+  - Bài kiểm tra đầu vào (Placement Test): Trắc nghiệm nhanh đánh giá năng lực, nếu đạt >= 80% độ chính xác thì tự động rút ngắn số bài mới của Unit đó.
+  - `CreateCourseModal.tsx`: Hỗ trợ kéo thả tải nhiều file cùng lúc, dán văn bản trực tiếp, chọn ngày thi và thời gian học/ngày.
+
+---
+
+### Bước 8: Màn Hình Cài Đặt, Sao Lưu/Khôi Phục JSON, PWA & Trải Nghiệm Mobile
+- **Đã làm**:
+  - `SettingsPage.tsx`: Tùy chỉnh số phút học/ngày, ngày thi, mục tiêu XP ngày, bật/tắt âm thanh, giao diện Sáng/Tối.
+  - Tính năng Sao lưu & Khôi phục: Endpoint `GET /api/export` xuất trọn vẹn dữ liệu JSON và `POST /api/import` phục hồi dữ liệu 100%.
+  - PWA: Cấu hình `manifest.webmanifest`, service worker `sw.js` cache tài nguyên tĩnh, hỗ trợ cài đặt Add to Home Screen trên iOS và Android.
+  - Web Audio API & Haptic Vibration: Phát âm thanh chúc mừng / thông báo đúng sai mượt mà.
+  - Bộ kiểm thử `SettingsAndBackupServiceTest` pass 5/5 test.
+
+---
+
+### Bước 9: Đóng Gói Container Đa Tầng & Triển Khai Đám Mây 0đ
+- **Đã làm**:
+  - `Dockerfile` multi-stage: Giai đoạn 1 build React Vite, Giai đoạn 2 build Spring Boot JAR nhúng static frontend, Giai đoạn 3 chạy trên JRE Alpine 17 siêu nhẹ với tài khoản bảo mật `studyapp` non-root.
+  - `docker-compose.yml`: Chạy PostgreSQL 16 Alpine và StudyApp cô lập trong sandbox, mount volume dữ liệu an toàn.
+  - `DEPLOYMENT.md`: Hướng dẫn đầy đủ triển khai đám mây miễn phí 100% (Render.com + Neon.tech + Gemini API).
+
+---
+
+## Tổng Kết Kết Quả Kiểm Thử (Toàn Bộ 25/25 Test Đều Pass 100%)
 
 ```text
 [INFO] Running com.studyapp.controller.AuthControllerTest
 [INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0
 [INFO] Running com.studyapp.controller.SessionControllerTest
 [INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Running com.studyapp.service.DocumentExtractionServiceTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0
 [INFO] Running com.studyapp.service.ScheduleServiceTest
 [INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Running com.studyapp.service.SettingsAndBackupServiceTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0
 [INFO] Running com.studyapp.service.SrsServiceTest
 [INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0
 [INFO] -------------------------------------------------------
 [INFO] Results:
-[INFO] Tests run: 17, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 25, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -139,3 +185,12 @@ npm run dev
 5. Chuyển qua tab **"Đường học"** để xem cây bài học ziczac Duolingo.
 6. Chuyển qua tab **"Lịch học"** để xem kế hoạch từng ngày và thử tính năng dồn lịch tự động.
 7. Chuyển qua tab **"Thống kê"** để xem cấp độ ghi nhớ ngắt quãng SRS (nhớ vững $\ge 21$ ngày) và top các câu hay làm sai.
+
+---
+
+### Khắc Phục Lỗi Ngân Hàng Câu Hỏi & Hiển Thị Đề Thi (Fix Ngày 18/10/2026)
+- **Vấn đề đã khắc phục**:
+  1. **Câu hỏi bị cắt cụt (Prompt truncation)**: Thuật toán quét ngược (`parseExamQuestions`) trước đó bị ngắt sớm khi gặp ký tự cuối câu hỏi (`?`, `:`, `nào`, `là`), dẫn đến các câu nhiều dòng chỉ còn lại đuôi câu (như `"cụm từ nào?"`, `"được gọi là"`). Đã sửa thành bộ quét ngược thu thập toàn bộ các dòng của câu hỏi cho đến khi chạm điểm bắt đầu câu hỏi (`Câu \d+:`, `Question \d+:`) hoặc lựa chọn của câu trước.
+  2. **Đáp án bị lộ chữ `(đúng)`**: Hàm `buildOutlineFromExamQuestions` và phương thức lưu đáp án trước đó vô tình gắn nhãn `(đúng)` vào nội dung chuỗi đáp án hiển thị. Đã bổ sung bộ lọc `cleanChoiceText` triệt để loại bỏ `(đúng)`, `(dung)`, `(sai)`, `*`, `✓`, `[x]` ở cả Backend (`AiService`, `SessionService`, `CourseCreationPipelineService`) và Frontend (`SessionPage.tsx`).
+  3. **Thẻ "Khái niệm mới" thừa thãi**: Bỏ màn hình trung gian "Khái niệm mới" đối với các câu trắc nghiệm nhiều lựa chọn (`hasOptions >= 2`), cho phép người học vào thẳng bài tập trắc nghiệm không bị gián đoạn.
+  4. **Tự động vá dữ liệu cũ (Auto-repair)**: Cơ chế `@EventListener(ApplicationReadyEvent.class)` tự động phát hiện và vá lại các khóa học cũ bị lỗi trong cơ sở dữ liệu ngay khi khởi động.

@@ -141,7 +141,9 @@ public class SessionService {
         Item item = itemRepository.findById(request.itemId())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy câu hỏi: " + request.itemId()));
 
-        boolean isCorrect = item.getAnswer().trim().equalsIgnoreCase(request.selectedAnswer().trim());
+        String cleanDbAnswer = AiService.cleanChoiceText(item.getAnswer());
+        String cleanUserAnswer = AiService.cleanChoiceText(request.selectedAnswer());
+        boolean isCorrect = cleanDbAnswer.equalsIgnoreCase(cleanUserAnswer);
 
         // Tìm khóa học để lấy ngày thi
         LocalDate examDate = null;
@@ -163,8 +165,8 @@ public class SessionService {
 
         return new AnswerResponse(
                 isCorrect,
-                item.getAnswer(),
-                item.getExplanation(),
+                cleanDbAnswer,
+                AiService.cleanChoiceText(item.getExplanation()),
                 item.getSourceQuote(),
                 xpEarned,
                 quality,
@@ -312,17 +314,28 @@ public class SessionService {
     }
 
     private SessionItemDto mapToDto(Item item, String lessonTitle, boolean introduced, boolean isReview) {
+        String cleanAnswer = AiService.cleanChoiceText(item.getAnswer());
         List<String> options = new ArrayList<>();
-        options.add(item.getAnswer());
+        options.add(cleanAnswer);
 
         try {
             List<String> distractors = objectMapper.readValue(item.getDistractors(), new TypeReference<List<String>>() {});
             if (distractors != null) {
-                options.addAll(distractors);
+                for (String d : distractors) {
+                    String cd = AiService.cleanChoiceText(d);
+                    if (!cd.equalsIgnoreCase(cleanAnswer) && !options.contains(cd)) {
+                        options.add(cd);
+                    }
+                }
             }
         } catch (Exception e) {
-            // Fallback nếu parse lỗi
             options.addAll(List.of("Đáp án A", "Đáp án B", "Đáp án C"));
+        }
+
+        while (options.size() < 4) {
+            String pad = "Phương án " + (char)('A' + options.size());
+            if (!options.contains(pad)) options.add(pad);
+            else break;
         }
 
         // Xáo trộn vị trí các đáp án ngẫu nhiên
@@ -334,9 +347,9 @@ public class SessionService {
                 lessonTitle,
                 item.getPrompt(),
                 item.getIntro(),
-                item.getAnswer(),
+                cleanAnswer,
                 options,
-                item.getExplanation(),
+                AiService.cleanChoiceText(item.getExplanation()),
                 item.getSourceQuote(),
                 introduced,
                 isReview

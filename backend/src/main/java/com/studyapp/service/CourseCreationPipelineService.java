@@ -167,13 +167,18 @@ public class CourseCreationPipelineService {
         List<AiService.GeneratedItem> aiItems = aiService.generateLessonItems(lesson.getTitle(), sourceText);
 
         for (AiService.GeneratedItem aiItem : aiItems) {
+            List<String> cleanDistractors = new ArrayList<>();
+            for (String d : aiItem.distractors()) {
+                cleanDistractors.add(AiService.cleanChoiceText(d));
+            }
+
             Item item = new Item(
                     lessonId,
                     aiItem.prompt(),
                     aiItem.intro(),
-                    aiItem.answer(),
-                    objectMapper.writeValueAsString(aiItem.distractors()),
-                    aiItem.explanation(),
+                    AiService.cleanChoiceText(aiItem.answer()),
+                    objectMapper.writeValueAsString(cleanDistractors),
+                    AiService.cleanChoiceText(aiItem.explanation()),
                     aiItem.sourceQuote()
             );
             itemRepository.save(item);
@@ -188,6 +193,77 @@ public class CourseCreationPipelineService {
         }
 
         return itemRepository.findByLessonId(lessonId);
+    }
+
+    @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
+    @Transactional
+    public void autoRepairExistingData() {
+        try {
+            List<Course> courses = courseRepository.findAll();
+            for (Course course : courses) {
+                if (course.getRawText() == null || course.getRawText().isBlank()) continue;
+
+                List<Unit> units = unitRepository.findByCourseIdOrderBySortOrderAsc(course.getId());
+                boolean hasCorrupted = false;
+                for (Unit u : units) {
+                    for (Section s : sectionRepository.findByUnitIdOrderBySortOrderAsc(u.getId())) {
+                        for (Lesson l : lessonRepository.findBySectionIdOrderBySortOrderAsc(s.getId())) {
+                            if (l.getSourceText() != null && (l.getSourceText().contains("(đúng)")
+                                    || l.getSourceText().contains("cụm từ nào?")
+                                    || l.getSourceText().contains("được gọi là")
+                                    || l.getSourceText().contains("độ câu hỏi")
+                                    || l.getSourceText().contains("Giải thích đáp án")
+                                    || l.getSourceText().contains("Câu 4: cụm từ nào?"))) {
+                                hasCorrupted = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (hasCorrupted) {
+                    System.out.println("Auto-repairing corrupted course data: " + course.getTitle());
+                    AiService.GeneratedOutline freshOutline = aiService.generateOutline(course.getRawText());
+
+                    List<Lesson> allExistingLessons = new ArrayList<>();
+                    for (Unit u : units) {
+                        for (Section s : sectionRepository.findByUnitIdOrderBySortOrderAsc(u.getId())) {
+                            allExistingLessons.addAll(lessonRepository.findBySectionIdOrderBySortOrderAsc(s.getId()));
+                        }
+                    }
+
+                    List<AiService.GeneratedLesson> freshLessons = new ArrayList<>();
+                    for (AiService.GeneratedUnit fu : freshOutline.units()) {
+                        for (AiService.GeneratedSection fs : fu.sections()) {
+                            freshLessons.addAll(fs.lessons());
+                        }
+                    }
+
+                    for (int i = 0; i < Math.min(allExistingLessons.size(), freshLessons.size()); i++) {
+                        Lesson oldL = allExistingLessons.get(i);
+                        AiService.GeneratedLesson freshL = freshLessons.get(i);
+                        oldL.setTitle(freshL.title());
+                        oldL.setSourceText(freshL.sourceText());
+                        lessonRepository.save(oldL);
+
+                        List<Item> oldItems = itemRepository.findByLessonId(oldL.getId());
+                        for (Item oi : oldItems) {
+                            itemStateRepository.deleteById(oi.getId());
+                        }
+                        itemRepository.deleteAll(oldItems);
+
+                        try {
+                            generateItemsForLesson(oldL.getId());
+                        } catch (Exception ex) {
+                            System.err.println("Could not regenerate items for lesson " + oldL.getId() + ": " + ex.getMessage());
+                        }
+                    }
+                    System.out.println("Course data repaired successfully!");
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Error during auto-repair: " + e.getMessage());
+        }
     }
 
     @Transactional

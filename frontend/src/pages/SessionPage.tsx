@@ -28,6 +28,16 @@ interface SessionPageProps {
   onExit: () => void;
 }
 
+function cleanOptionText(text?: string | null): string {
+  if (!text) return '';
+  return text
+    .replace(/\s*\((?:đúng|sai|dung|correct|true|false)\)\s*$/i, '')
+    .replace(/\s*\[(?:x|v|đúng|correct)\]\s*$/i, '')
+    .replace(/^[\*✓✔]\s*/, '')
+    .replace(/[\*✓✔]$/, '')
+    .trim();
+}
+
 export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageProps) {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<SessionItem[]>([]);
@@ -59,7 +69,9 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
         const data = await apiRequest<any>(endpoint);
         if (data.items && data.items.length > 0) {
           setItems(data.items);
-          setIsIntroMode(!data.items[0].introduced);
+          const firstItem = data.items[0];
+          const hasOptions = firstItem.options && firstItem.options.length >= 2;
+          setIsIntroMode(!firstItem.introduced && !hasOptions);
           setStartTime(Date.now());
         }
       } catch (err) {
@@ -131,12 +143,14 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
   const handleNext = async () => {
     if (currentIndex + 1 < items.length) {
       const nextIdx = currentIndex + 1;
+      const nextItem = items[nextIdx];
       setCurrentIndex(nextIdx);
       setSelectedOption(null);
       setHasAnswered(false);
       setIsCorrect(null);
       setAnswerDetails(null);
-      setIsIntroMode(!items[nextIdx].introduced);
+      const hasOptions = nextItem.options && nextItem.options.length >= 2;
+      setIsIntroMode(!nextItem.introduced && !hasOptions);
       setStartTime(Date.now());
     } else {
       // Kết thúc phiên học
@@ -255,9 +269,9 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
                 {finalSummary.failedItems.map((fi: any, idx: number) => (
                   <div key={idx} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-duo-dark-border text-xs">
                     <p className="font-bold text-slate-700 dark:text-slate-300 mb-1">{fi.prompt}</p>
-                    <p className="text-emerald-600 font-semibold mb-1">✓ Đáp án: {fi.answer}</p>
+                    <p className="text-emerald-600 font-semibold mb-1">✓ Đáp án: {cleanOptionText(fi.answer)}</p>
                     {fi.explanation && (
-                      <p className="text-slate-500 dark:text-slate-400 italic">"{fi.explanation}"</p>
+                      <p className="text-slate-500 dark:text-slate-400 italic">"{cleanOptionText(fi.explanation)}"</p>
                     )}
                   </div>
                 ))}
@@ -360,7 +374,7 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
                 let btnStyle = "border-slate-200 dark:border-duo-dark-border bg-white dark:bg-duo-dark-card text-slate-800 dark:text-white";
                 
                 if (hasAnswered) {
-                  if (option === answerDetails?.correctAnswer) {
+                  if (cleanOptionText(option) === cleanOptionText(answerDetails?.correctAnswer)) {
                     btnStyle = "border-duo-green bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-bold";
                   } else if (isSelected && !isCorrect) {
                     btnStyle = "border-duo-red bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 font-bold";
@@ -378,7 +392,7 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
                     onClick={() => setSelectedOption(option)}
                     className={`w-full text-left p-4 rounded-2xl border-2 transition-all flex items-center justify-between text-sm sm:text-base font-semibold ${btnStyle}`}
                   >
-                    <span>{option}</span>
+                    <span>{cleanOptionText(option)}</span>
                     <span className="w-6 h-6 rounded-lg border border-slate-300 dark:border-slate-600 flex items-center justify-center text-xs font-bold text-slate-400 ml-3 flex-shrink-0">
                       {String.fromCharCode(65 + idx)}
                     </span>

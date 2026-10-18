@@ -405,14 +405,16 @@ public class AiService {
             StringBuilder sourceSb = new StringBuilder();
             for (int k = 0; k < batch.size(); k++) {
                 GeneratedItem q = batch.get(k);
-                sourceSb.append("Câu ").append(k + 1).append(": ").append(q.prompt()).append("\n");
-                sourceSb.append("A. ").append(q.answer()).append(" (đúng)\n");
+                String cleanPrompt = q.prompt().replaceFirst("^(?i)(?:Câu|Question|Bài|Item)\\s*\\d+[:\\.\\s]+", "").trim();
+                sourceSb.append("Câu ").append(k + 1).append(": ").append(cleanPrompt).append("\n");
+                sourceSb.append("A. ").append(cleanChoiceText(q.answer())).append("\n");
                 List<String> d = q.distractors();
                 char c = 'B';
                 for (String dist : d) {
-                    sourceSb.append(c++).append(". ").append(dist).append("\n");
+                    sourceSb.append(c++).append(". ").append(cleanChoiceText(dist)).append("\n");
                 }
-                sourceSb.append("Giải thích: ").append(q.explanation()).append("\n\n");
+                sourceSb.append("Đáp án: A\n");
+                sourceSb.append("Giải thích: ").append(cleanChoiceText(q.explanation())).append("\n\n");
             }
 
             String lTitle = "Bài " + lessonIndex + ": Luyện tập trọng tâm " + lessonIndex + " (Câu " + (i + 1) + " - " + end + ")";
@@ -522,9 +524,9 @@ public class AiService {
             String line = lines[i].trim();
             // Phát hiện lựa chọn A.
             if (line.matches("^A[\\.:\\)]\\s+(.+)")) {
-                Map<String, String> choices = new LinkedHashMap<>();
+                Map<String, String> rawChoices = new LinkedHashMap<>();
                 String optTextA = line.replaceFirst("^A[\\.:\\)]\\s*", "").trim();
-                choices.put("A", cleanChoiceText(optTextA));
+                rawChoices.put("A", optTextA);
 
                 int nextIdx = i + 1;
                 String expected = "B";
@@ -533,7 +535,7 @@ public class AiService {
                     String cand = lines[nextIdx].trim();
                     if (cand.matches("^" + expected + "[\\.:\\)]\\s+(.+)")) {
                         String optText = cand.replaceFirst("^" + expected + "[\\.:\\)]\\s*", "").trim();
-                        choices.put(expected, cleanChoiceText(optText));
+                        rawChoices.put(expected, optText);
                         if (expected.equals("B")) expected = "C";
                         else if (expected.equals("C")) expected = "D";
                         else if (expected.equals("D")) break;
@@ -541,35 +543,83 @@ public class AiService {
                     nextIdx++;
                 }
 
-                if (choices.size() >= 2) {
+                if (rawChoices.size() >= 2) {
                     // Tìm câu hỏi (prompt) bằng cách quét ngược từ vị trí A
-                    StringBuilder promptBuilder = new StringBuilder();
-                    for (int k = i - 1; k >= Math.max(0, i - 6); k--) {
+                    List<String> promptLines = new ArrayList<>();
+                    for (int k = i - 1; k >= Math.max(0, i - 15); k--) {
                         String prev = lines[k].trim();
-                        if (prev.isEmpty()) continue;
-                        if (prev.matches("(?i)^(Chương|Môn|Nhận|biết|Thông|hiểu|Vận|dụng|\\d+\\s+Chọn|\\d+$|===|Điểm|Mức|Loại|Giải).*")) continue;
-                        promptBuilder.insert(0, prev + " ");
-                        if (prev.endsWith("?") || prev.endsWith(":") || prev.matches("(?i).*(là|nào|bao gồm|được viết tắt)$")) {
+                        if (prev.isEmpty()) {
+                            if (!promptLines.isEmpty() && k <= i - 3) {
+                                break;
+                            }
+                            continue;
+                        }
+
+                        // Nếu gặp đáp án hoặc giải thích của câu trước (Đáp án: A / Key: B)
+                        if (prev.matches("(?i)^(?:Đáp án|Key|Ans|Đ/A|Giải thích)[\\s:].*")) {
+                            break;
+                        }
+
+                        // Nếu gặp lựa chọn trắc nghiệm của câu trước (D. ... hoặc C. ...)
+                        if (prev.matches("^[A-D][\\.:\\)]\\s+.*")) {
+                            break;
+                        }
+
+                        // Bỏ qua các dòng rác phân đoạn tài liệu hoặc header trang / bảng
+                        if (prev.matches("(?i)^(?:Chương|Môn|Học phần|Nhận|biết|Thông|hiểu|Vận|dụng|\\d+\\s+Chọn|\\d+$|===|Điểm|Mức|Loại|Cấp\\s*độ|Giải\\s*thích|Nội\\s*dung|Thời\\s*gian|Trắc\\s*nghiệm).*")) {
+                            continue;
+                        }
+
+                        // Thêm dòng này vào đầu danh sách dòng của câu hỏi
+                        promptLines.add(0, prev);
+
+                        // Nếu dòng này là DÒNG BẮT ĐẦU CÂU HỎI (VD: "Câu 4: ...", "Question 4: ...", "4. ...")
+                        if (prev.matches("(?i)^(?:Câu|Question|Bài|Item)\\s*\\d+[:\\.\\s].*") ||
+                            prev.matches("^\\d+[\\.\\)]\\s+[A-Za-zÀ-ỹ].*")) {
+                            break; // Đã tìm thấy điểm bắt đầu của câu hỏi! Dừng quét ngược.
+                        }
+                    }
+
+                    String fullPrompt = String.join(" ", promptLines).trim();
+                    // Làm sạch các từ thừa tiêu đề cột bảng Eduso bị dính vào câu hỏi
+                    fullPrompt = fullPrompt.replaceAll("(?i)\\b(?:Cấp\\s*độ\\s*câu\\s*hỏi|độ\\s*câu\\s*hỏi|Giải\\s*thích\\s*đáp\\s*án|Loại\\s*câu\\s*hỏi|Nội\\s*dung\\s*câu\\s*hỏi)\\b\\s*", "").trim();
+                    fullPrompt = fullPrompt.replaceAll("\\s{2,}", " ");
+
+                    // Tìm đáp án ở các dòng sau lựa chọn cuối (VD: "Đáp án: C" hoặc "Key: B")
+                    String trailingKey = null;
+                    for (int post = nextIdx; post < Math.min(lines.length, nextIdx + 4); post++) {
+                        String postLine = lines[post].trim();
+                        Matcher m = Pattern.compile("(?i)(?:Đáp án|Key|Ans|Đ/A)[\\s:]*([A-D])\\b").matcher(postLine);
+                        if (m.find()) {
+                            trailingKey = m.group(1).toUpperCase();
                             break;
                         }
                     }
 
-                    String prompt = promptBuilder.toString().trim();
-                    prompt = prompt.replaceFirst("^(?i)(?:Câu|Question|\\d+)[\\.\\:\\)]\\s*", "");
+                    // Nhận diện đáp án đúng từ rawChoices và prompt / trailingKey
+                    String promptForDetection = trailingKey != null ? ("Đáp án: " + trailingKey + " " + fullPrompt) : fullPrompt;
+                    String correctKey = detectCorrectChoice(promptForDetection, rawChoices);
 
-                    if (prompt.length() > 8) {
-                        // Xác định đáp án
-                        String correctKey = detectCorrectChoice(prompt, choices);
-                        String answer = choices.get(correctKey);
+                    // Làm sạch toàn bộ các lựa chọn (loại bỏ hoàn toàn "(đúng)", "*", v.v.)
+                    Map<String, String> choices = new LinkedHashMap<>();
+                    for (Map.Entry<String, String> entry : rawChoices.entrySet()) {
+                        choices.put(entry.getKey(), cleanChoiceText(entry.getValue()));
+                    }
 
+                    String answer = choices.get(correctKey);
+                    if (answer == null || answer.isBlank()) {
+                        answer = choices.values().iterator().next();
+                    }
+
+                    if (fullPrompt.length() > 5) {
                         List<String> distractors = new ArrayList<>();
                         for (Map.Entry<String, String> e : choices.entrySet()) {
-                            if (!e.getKey().equals(correctKey)) {
+                            if (!e.getKey().equals(correctKey) && !e.getValue().equalsIgnoreCase(answer)) {
                                 distractors.add(e.getValue());
                             }
                         }
 
-                        // Nếu là câu hỏi Đúng/Sai 2 lựa chọn, bổ sung thêm đáp án
+                        // Nếu là câu hỏi Đúng/Sai 2 lựa chọn, bổ sung thêm đáp án để đủ 4 phương án
                         if (distractors.size() < 3) {
                             if (choices.containsKey("A") && choices.containsKey("B") &&
                                     (choices.get("A").equalsIgnoreCase("Đúng") || choices.get("B").equalsIgnoreCase("Sai"))) {
@@ -582,11 +632,11 @@ public class AiService {
                         }
 
                         String explanation = "Đáp án chính xác là " + correctKey + ": " + answer + " (Theo tài liệu câu hỏi đề thi).";
-                        String sourceQuote = prompt.length() > 60 ? prompt.substring(0, 60) : prompt;
+                        String sourceQuote = fullPrompt.length() > 80 ? fullPrompt.substring(0, 80) : fullPrompt;
 
                         items.add(new GeneratedItem(
-                                prompt,
-                                "Câu hỏi trắc nghiệm trọng tâm:",
+                                fullPrompt,
+                                "", // Không hiển thị intro trùng lặp
                                 answer,
                                 distractors.subList(0, Math.min(3, distractors.size())),
                                 explanation,
@@ -602,18 +652,37 @@ public class AiService {
         return items;
     }
 
-    private String cleanChoiceText(String raw) {
-        return raw.replaceFirst("(?i)\\s+(Nhận|biết|Thông|hiểu|Vận|dụng|\\d+\\s+Chọn|Điểm|Mức).*$", "").trim();
+    public static String cleanChoiceText(String raw) {
+        if (raw == null) return "";
+        String s = raw.trim();
+
+        // 1. Bỏ metadata phân loại đề thi / Eduso ở cuối dòng
+        s = s.replaceFirst("(?i)\\s*\\(?\\s*(?:Nhận biết|Thông hiểu|Vận dụng(?: cao)?|\\d+\\s+Chọn|Điểm|Mức|Level)\\s*\\)?\\s*$", "");
+
+        // 2. Bỏ các nhãn đánh dấu đáp án đúng/sai dạng ngoặc tròn: (đúng), (sai), (đáp án đúng), (correct), (true)...
+        s = s.replaceFirst("(?i)\\s*\\(\\s*(?:đúng|dung|sai|đáp án đúng|dap an dung|correct|true|false)\\s*\\)\\s*$", "");
+
+        // 3. Bỏ các nhãn dạng ngoặc vuông: [x], [v], [đúng], [correct]...
+        s = s.replaceFirst("(?i)\\s*\\[\\s*(?:x|v|đúng|dung|correct)\\s*\\]\\s*$", "");
+
+        // 4. Bỏ các ký tự đặc biệt đánh dấu: *, ✓, ✔ ở đầu hoặc cuối chuỗi
+        s = s.replaceFirst("^[\\*✓✔•\\-–—]\\s*", "");
+        s = s.replaceFirst("\\s*[\\*✓✔]$", "");
+
+        return s.trim();
     }
 
     /**
      * Nhận diện phương án đúng một cách tổng quát, KHÔNG hardcode bất kỳ môn nào.
      */
     private String detectCorrectChoice(String prompt, Map<String, String> choices) {
-        // 1. Kiểm tra dấu hiệu đánh dấu trong phương án
+        // 1. Kiểm tra dấu hiệu đánh dấu trong phương án (trước khi clean)
         for (Map.Entry<String, String> e : choices.entrySet()) {
-            String val = e.getValue();
-            if (val.startsWith("*") || val.contains("(đúng)") || val.contains("[x]") || val.contains("✓") || val.contains("✔")) {
+            String val = e.getValue().trim();
+            if (val.startsWith("*") || val.endsWith("*")
+                    || val.contains("✓") || val.contains("✔")
+                    || Pattern.compile("(?i)\\(\\s*(?:đúng|dung|đáp án đúng|correct|true)\\s*\\)").matcher(val).find()
+                    || Pattern.compile("(?i)\\[\\s*(?:x|v|đúng|dung|correct)\\s*\\]").matcher(val).find()) {
                 return e.getKey();
             }
         }
