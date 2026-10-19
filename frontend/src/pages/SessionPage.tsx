@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../api/client';
 import { 
   X, CheckCircle2, XCircle, ArrowRight, Sparkles, Flame, 
-  RotateCcw, BookOpen, HelpCircle, Trophy, Award 
+  RotateCcw, BookOpen, HelpCircle, Trophy, Award, ShieldCheck 
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { playSuccessSound, playFailureSound, playFanfareSound, triggerHaptic } from '../utils/sound';
+import { playSuccessSound, playFailureSound, playFanfareSound, playTapSound, playOptionSelectSound, triggerHaptic } from '../utils/sound';
 
 interface SessionItem {
   itemId: string;
@@ -68,8 +68,18 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
 
   const [lessonOverview, setLessonOverview] = useState<LessonOverview | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string>('');
-  const [showOverview, setShowOverview] = useState(true);
   const [overviewModalOpen, setOverviewModalOpen] = useState(false);
+
+  // Phân bổ kiến thức xen kẽ (Interleaved Micro-Learning Cards)
+  const [activeMicroStage, setActiveMicroStage] = useState<'start' | 'mid' | 'late' | null>(null);
+  const [hasShownMidCard, setHasShownMidCard] = useState(false);
+  const [hasShownLateCard, setHasShownLateCard] = useState(false);
+
+  // Chặng sửa câu sai ở cuối bài (Mistake Review Stage)
+  const [mistakeQueue, setMistakeQueue] = useState<SessionItem[]>([]);
+  const [isReviewingMistakes, setIsReviewingMistakes] = useState(false);
+  const [showMistakeTransition, setShowMistakeTransition] = useState(false);
+  const [mistakeIndex, setMistakeIndex] = useState(0);
 
   const [startTime, setStartTime] = useState<number>(Date.now());
   const [totalXp, setTotalXp] = useState(0);
@@ -79,7 +89,7 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
   const [completed, setCompleted] = useState(false);
   const [finalSummary, setFinalSummary] = useState<any>(null);
 
-  // Tải danh sách câu hỏi (theo bài học cụ thể hoặc hàng đợi ôn tập hôm nay)
+  // Tải danh sách câu hỏi
   useEffect(() => {
     async function loadSession() {
       try {
@@ -90,9 +100,9 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
           setSessionTitle(data.lessonTitle || data.courseTitle || '');
           if (data.overview && ((data.overview.keyPoints && data.overview.keyPoints.length > 0) || (data.overview.concepts && data.overview.concepts.length > 0))) {
             setLessonOverview(data.overview);
-            setShowOverview(true);
+            setActiveMicroStage('start'); // Bắt đầu bằng thẻ kiến thức phần 1 (gọn gàng, vừa màn hình)
           } else {
-            setShowOverview(false);
+            setActiveMicroStage(null);
           }
           const firstItem = data.items[0];
           const hasOptions = firstItem.options && firstItem.options.length >= 2;
@@ -108,12 +118,16 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
     loadSession();
   }, [lessonId]);
 
-  const currentItem = items[currentIndex];
-  const progressPercent = items.length > 0 ? Math.min(100, Math.round((currentIndex / items.length) * 100)) : 0;
+  const activeItem = isReviewingMistakes ? mistakeQueue[mistakeIndex] : items[currentIndex];
+
+  const progressPercent = isReviewingMistakes
+    ? (mistakeQueue.length > 0 ? Math.min(100, Math.round(((mistakeIndex + (hasAnswered ? 1 : 0)) / mistakeQueue.length) * 100)) : 100)
+    : (items.length > 0 ? Math.min(100, Math.round(((currentIndex + (hasAnswered ? 1 : 0)) / items.length) * 100)) : 0);
 
   // Xử lý nộp câu trả lời
   const handleSubmitAnswer = async () => {
-    if (!selectedOption || hasAnswered || !currentItem) return;
+    if (!selectedOption || hasAnswered || !activeItem) return;
+    playTapSound();
 
     const responseMs = Date.now() - startTime;
     setHasAnswered(true);
@@ -122,10 +136,10 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
       const res = await apiRequest<any>('/api/session/answer', {
         method: 'POST',
         body: JSON.stringify({
-          itemId: currentItem.itemId,
+          itemId: activeItem.itemId,
           selectedAnswer: selectedOption,
           responseMs,
-          isRetry: !!currentItem.isRetry,
+          isRetry: isReviewingMistakes || !!activeItem.isRetry,
         }),
       });
 
@@ -138,73 +152,140 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
       });
 
       if (res.correct) {
-        setCorrectCount(prev => prev + 1);
-        setTotalXp(prev => prev + res.xpEarned);
+        if (!isReviewingMistakes) {
+          setCorrectCount(prev => prev + 1);
+          setTotalXp(prev => prev + res.xpEarned);
+        } else {
+          setTotalXp(prev => prev + 5); // Thưởng +5 XP khi sửa câu sai thành công
+        }
         playSuccessSound();
         triggerHaptic('success');
       } else {
-        setIncorrectCount(prev => prev + 1);
+        if (!isReviewingMistakes) {
+          setIncorrectCount(prev => prev + 1);
+          if (!failedItemIds.includes(activeItem.itemId)) {
+            setFailedItemIds(prev => [...prev, activeItem.itemId]);
+          }
+          // Lưu vào hàng đợi làm lại ở cuối bài học
+          setMistakeQueue(prev => prev.some(x => x.itemId === activeItem.itemId) ? prev : [...prev, activeItem]);
+        } else {
+          // Trong chặng sửa sai nếu vẫn sai thì đẩy lại về cuối hàng đợi sửa sai
+          setMistakeQueue(prev => [...prev, activeItem]);
+        }
         playFailureSound();
         triggerHaptic('error');
-        if (!failedItemIds.includes(currentItem.itemId)) {
-          setFailedItemIds(prev => [...prev, currentItem.itemId]);
-        }
-        // Đẩy câu sai về cuối hàng đợi (tối đa 2 lần)
-        if (res.shouldRepeatInSession) {
-          const retryItem: SessionItem = {
-            ...currentItem,
-            isRetry: true,
-            introduced: true,
-          };
-          setItems(prev => [...prev, retryItem]);
-        }
       }
     } catch (err) {
       console.error('Lỗi khi chấm điểm:', err);
     }
   };
 
-  // Chuyển sang câu tiếp theo hoặc kết thúc
+  // Hoàn tất phiên học và gọi API finish
+  const finishSession = async () => {
+    const isPerfect = incorrectCount === 0;
+    try {
+      const summary = await apiRequest<any>('/api/session/finish', {
+        method: 'POST',
+        body: JSON.stringify({
+          totalQuestions: items.length,
+          correctCount,
+          incorrectCount,
+          totalXpEarned: totalXp,
+          isPerfect,
+          failedItemIds,
+          lessonId: lessonId || undefined,
+        }),
+      });
+      setFinalSummary(summary);
+      setCompleted(true);
+      playFanfareSound();
+      triggerHaptic('success');
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.6 }
+      });
+    } catch (err) {
+      console.error('Lỗi khi kết thúc phiên:', err);
+    }
+  };
+
+  // Chuyển sang câu tiếp theo, thẻ kiến thức xen kẽ hoặc chặng sửa câu sai
   const handleNext = async () => {
-    if (currentIndex + 1 < items.length) {
-      const nextIdx = currentIndex + 1;
-      const nextItem = items[nextIdx];
-      setCurrentIndex(nextIdx);
-      setSelectedOption(null);
-      setHasAnswered(false);
-      setIsCorrect(null);
-      setAnswerDetails(null);
-      const hasOptions = nextItem.options && nextItem.options.length >= 2;
-      setIsIntroMode(!nextItem.introduced && !hasOptions);
-      setStartTime(Date.now());
+    playTapSound();
+    if (!isReviewingMistakes) {
+      // 1. Kiểm tra xem có cần hiển thị thẻ kiến thức chặng giữa (Mid Card) không
+      const midPoint = Math.max(1, Math.floor(items.length / 2) - 1);
+      if (currentIndex === midPoint && !hasShownMidCard && lessonOverview && 
+          ((lessonOverview.keyPoints && lessonOverview.keyPoints.length > 1) || 
+           (lessonOverview.concepts && lessonOverview.concepts.length > 1))) {
+        setHasShownMidCard(true);
+        setActiveMicroStage('mid');
+        setSelectedOption(null);
+        setHasAnswered(false);
+        setIsCorrect(null);
+        setAnswerDetails(null);
+        return;
+      }
+
+      // 2. Kiểm tra xem có cần hiển thị thẻ kiến thức chặng cuối (Late Card) không
+      const latePoint = Math.max(2, items.length - 2);
+      if (currentIndex === latePoint && !hasShownLateCard && lessonOverview && 
+          ((lessonOverview.keyPoints && lessonOverview.keyPoints.length > 2) || 
+           (lessonOverview.concepts && lessonOverview.concepts.length > 2))) {
+        setHasShownLateCard(true);
+        setActiveMicroStage('late');
+        setSelectedOption(null);
+        setHasAnswered(false);
+        setIsCorrect(null);
+        setAnswerDetails(null);
+        return;
+      }
+
+      // 3. Nếu còn câu hỏi chính tiếp theo
+      if (currentIndex + 1 < items.length) {
+        const nextIdx = currentIndex + 1;
+        const nextItem = items[nextIdx];
+        setCurrentIndex(nextIdx);
+        setSelectedOption(null);
+        setHasAnswered(false);
+        setIsCorrect(null);
+        setAnswerDetails(null);
+        const hasOptions = nextItem.options && nextItem.options.length >= 2;
+        setIsIntroMode(!nextItem.introduced && !hasOptions);
+        setStartTime(Date.now());
+        return;
+      }
+
+      // 4. Đã làm hết toàn bộ câu hỏi chính thức!
+      // Kiểm tra: Có câu nào làm sai cần làm lại ở cuối bài không?
+      if (mistakeQueue.length > 0) {
+        setIsReviewingMistakes(true);
+        setShowMistakeTransition(true);
+        setMistakeIndex(0);
+        setSelectedOption(null);
+        setHasAnswered(false);
+        setIsCorrect(null);
+        setAnswerDetails(null);
+        return;
+      }
+
+      // Không có câu sai -> Hoàn thành xuất sắc!
+      finishSession();
+
     } else {
-      // Kết thúc phiên học
-      const isPerfect = incorrectCount === 0;
-      try {
-        const summary = await apiRequest<any>('/api/session/finish', {
-          method: 'POST',
-          body: JSON.stringify({
-            totalQuestions: items.length,
-            correctCount,
-            incorrectCount,
-            totalXpEarned: totalXp,
-            isPerfect,
-            failedItemIds,
-            lessonId: lessonId || undefined,
-          }),
-        });
-        setFinalSummary(summary);
-        setCompleted(true);
-        playFanfareSound();
-        triggerHaptic('success');
-        // Bắn pháo hoa ăn mừng
-        confetti({
-          particleCount: 100,
-          spread: 70,
-          origin: { y: 0.6 }
-        });
-      } catch (err) {
-        console.error('Lỗi khi kết thúc phiên:', err);
+      // Đang trong chặng sửa câu sai
+      if (mistakeIndex + 1 < mistakeQueue.length) {
+        const nextIdx = mistakeIndex + 1;
+        setMistakeIndex(nextIdx);
+        setSelectedOption(null);
+        setHasAnswered(false);
+        setIsCorrect(null);
+        setAnswerDetails(null);
+        setStartTime(Date.now());
+      } else {
+        // Đã sửa xong toàn bộ các câu sai!
+        finishSession();
       }
     }
   };
@@ -220,7 +301,7 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
     );
   }
 
-  if (!currentItem && !completed) {
+  if (!activeItem && !completed) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-slate-50 dark:bg-duo-dark">
         <div className="bg-white dark:bg-duo-dark-card border-2 border-slate-200 dark:border-duo-dark-border rounded-3xl p-8 max-w-md w-full text-center">
@@ -315,116 +396,185 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
     );
   }
 
-  // MÀN HÌNH KHÁI QUÁT KIẾN THỨC BÀI HỌC (Trước khi vào làm trắc nghiệm)
-  if (showOverview && lessonOverview) {
+  // MÀN HÌNH CHUYỂN TIẾP: CHẶNG SỬA CÂU SAI Ở CUỐI BÀI
+  if (showMistakeTransition) {
     return (
-      <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-duo-dark">
-        {/* Top Header */}
-        <div className="sticky top-0 z-30 bg-white/95 dark:bg-duo-dark-card/95 backdrop-blur border-b border-slate-200 dark:border-duo-dark-border px-4 py-3 flex items-center justify-between max-w-xl mx-auto w-full">
-          <button
-            onClick={onExit}
-            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
-          >
-            <X className="w-6 h-6" />
-          </button>
-          <div className="flex items-center space-x-1.5 font-bold text-xs text-duo-blue bg-blue-50 dark:bg-blue-950/40 px-3 py-1.5 rounded-full border border-blue-200 dark:border-blue-900/50">
-            <BookOpen className="w-4 h-4 text-duo-blue" />
-            <span>Khái quát bài học</span>
+      <div className="min-h-screen flex items-center justify-center p-4 bg-slate-50 dark:bg-duo-dark animate-in fade-in zoom-in-95 duration-200">
+        <div className="w-full max-w-md bg-white dark:bg-duo-dark-card border-2 border-slate-200 dark:border-duo-dark-border rounded-3xl p-6 sm:p-8 shadow-sm text-center">
+          <div className="w-20 h-20 rounded-full bg-amber-100 dark:bg-amber-950/50 text-amber-500 mx-auto mb-4 flex items-center justify-center animate-bounce">
+            <ShieldCheck className="w-10 h-10" />
           </div>
-          <div className="w-6" />
+          <span className="text-[11px] font-black uppercase tracking-wider text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-3 py-1 rounded-full border border-amber-200 dark:border-amber-900/50">
+            Chặng củng cố cuối bài
+          </span>
+          <h2 className="text-2xl font-black text-slate-800 dark:text-white mt-3 mb-2">
+            Cùng sửa lại các câu chưa đúng!
+          </h2>
+          <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 mb-6 leading-relaxed">
+            Bạn có <strong>{mistakeQueue.length} câu</strong> cần làm lại để nắm chắc 100% kiến thức và hoàn thành xuất sắc bài học này.
+          </p>
+          <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/50 rounded-2xl flex items-center justify-center space-x-2 text-emerald-700 dark:text-emerald-300 text-xs font-bold mb-6">
+            <Sparkles className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+            <span>Thưởng thêm +5 XP cho mỗi câu sửa đúng</span>
+          </div>
+          <button
+            onClick={() => {
+              setShowMistakeTransition(false);
+              setStartTime(Date.now());
+              playSuccessSound();
+              triggerHaptic('success');
+            }}
+            className="w-full py-4 rounded-2xl font-black text-white uppercase tracking-wider text-sm btn-duo-green flex items-center justify-center space-x-2 shadow-duo-green"
+          >
+            <span>Bắt đầu sửa lỗi ngay</span>
+            <ArrowRight className="w-4 h-4 ml-1" />
+          </button>
         </div>
+      </div>
+    );
+  }
 
-        {/* Content Body */}
-        <div className="flex-1 max-w-xl mx-auto w-full p-4 flex flex-col justify-between pb-28">
-          <div className="py-2 space-y-6">
+  // MÀN HÌNH THẺ KIẾN THỨC XEN KẼ (Interleaved Micro-Learning Cards - Vừa màn hình, không phải cuộn)
+  if (activeMicroStage && lessonOverview) {
+    let stageTitle = 'Khởi động bài học';
+    let stageBadge = 'Chặng 1/3: Khởi động';
+    let stageColor = 'text-duo-green bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900/50';
+    let btnText = 'Bắt đầu làm bài tập';
+    let points: string[] = [];
+    let concepts: ConceptItem[] = [];
+
+    const allPoints = lessonOverview.keyPoints || [];
+    const allConcepts = lessonOverview.concepts || [];
+
+    if (activeMicroStage === 'start') {
+      stageTitle = 'Khởi động kiến thức';
+      stageBadge = 'Chặng 1/3: Khởi động';
+      stageColor = 'text-duo-green bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900/50';
+      btnText = 'Bắt đầu vào bài tập';
+      points = allPoints.slice(0, Math.min(2, allPoints.length));
+      concepts = allConcepts.slice(0, 1);
+    } else if (activeMicroStage === 'mid') {
+      stageTitle = 'Tiếp sức kiến thức giữa bài';
+      stageBadge = 'Chặng 2/3: Củng cố giữa bài';
+      stageColor = 'text-amber-500 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-900/50';
+      btnText = 'Tiếp tục luyện tập';
+      points = allPoints.slice(2, 4);
+      concepts = allConcepts.slice(1, 2);
+    } else if (activeMicroStage === 'late') {
+      stageTitle = 'Điểm mấu chốt về đích';
+      stageBadge = 'Chặng 3/3: Tăng tốc về đích';
+      stageColor = 'text-duo-blue bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-900/50';
+      btnText = 'Về đích bài học';
+      points = allPoints.slice(4);
+      concepts = allConcepts.slice(2, 3);
+    }
+
+    // Nếu thẻ chặng giữa hoặc chặng cuối không có nội dung thì bỏ qua
+    if (points.length === 0 && concepts.length === 0) {
+      setActiveMicroStage(null);
+    } else {
+      return (
+        <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-duo-dark justify-between p-4 max-w-md mx-auto w-full">
+          {/* Top Bar */}
+          <div className="flex items-center justify-between pt-2">
+            <button
+              onClick={onExit}
+              className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
+            >
+              <X className="w-6 h-6" />
+            </button>
+            <span className={`text-[11px] font-black uppercase tracking-wider px-3 py-1 rounded-full border ${stageColor}`}>
+              {stageBadge}
+            </span>
+            <div className="w-6" />
+          </div>
+
+          {/* Compact Card Content - Vừa vặn 1 màn hình */}
+          <div className="my-auto py-4 space-y-4">
             <div>
-              <span className="text-xs font-black uppercase tracking-wider text-duo-blue dark:text-sky-400">
-                {sessionTitle || 'Kiến thức trọng tâm'}
+              <span className="text-xs font-bold uppercase text-slate-400">
+                {sessionTitle}
               </span>
-              <h1 className="text-2xl sm:text-3xl font-black text-slate-800 dark:text-white mt-1 mb-2">
-                {lessonOverview.title}
+              <h1 className="text-xl sm:text-2xl font-black text-slate-800 dark:text-white mt-1">
+                {stageTitle}
               </h1>
-              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
-                {lessonOverview.description}
-              </p>
+              {activeMicroStage === 'start' && lessonOverview.description && (
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">
+                  {lessonOverview.description}
+                </p>
+              )}
             </div>
 
-            {/* Ghi nhớ cốt lõi (Key points) */}
-            {lessonOverview.keyPoints && lessonOverview.keyPoints.length > 0 && (
-              <div className="space-y-3">
-                <div className="flex items-center space-x-2 text-xs font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                  <Sparkles className="w-4 h-4 text-amber-500" />
-                  <span>Điểm cốt lõi cần nhớ ({lessonOverview.keyPoints.length})</span>
-                </div>
+            {/* Điểm cốt lõi rút gọn (1 - 2 ý) */}
+            {points.length > 0 && (
+              <div className="space-y-2">
+                <span className="text-[11px] font-black uppercase tracking-wider text-slate-400 flex items-center space-x-1">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Điểm cần nhớ</span>
+                </span>
                 <div className="space-y-2">
-                  {lessonOverview.keyPoints.map((point, idx) => (
+                  {points.map((p, idx) => (
                     <div
                       key={idx}
-                      className="flex items-start space-x-3 p-3.5 rounded-2xl bg-white dark:bg-duo-dark-card border-2 border-slate-200 dark:border-duo-dark-border shadow-sm"
+                      className="flex items-start space-x-2.5 p-3 rounded-2xl bg-white dark:bg-duo-dark-card border-2 border-slate-200 dark:border-duo-dark-border shadow-sm text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200 leading-snug"
                     >
-                      <span className="w-6 h-6 rounded-xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 font-black text-xs flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <span className="w-5 h-5 rounded-lg bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 font-black text-xs flex items-center justify-center flex-shrink-0 mt-0.5">
                         ✓
                       </span>
-                      <span className="text-sm font-semibold text-slate-700 dark:text-slate-200 leading-snug">
-                        {point}
-                      </span>
+                      <span>{p}</span>
                     </div>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Thuật ngữ & Khái niệm (Concepts) */}
-            {lessonOverview.concepts && lessonOverview.concepts.length > 0 && (
-              <div className="space-y-3">
-                <div className="flex items-center space-x-2 text-xs font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                  <BookOpen className="w-4 h-4 text-duo-blue" />
-                  <span>Thuật ngữ & Khái niệm trọng tâm</span>
-                </div>
-                <div className="space-y-2.5">
-                  {lessonOverview.concepts.map((concept, idx) => (
-                    <div
-                      key={idx}
-                      className="p-4 rounded-2xl bg-white dark:bg-duo-dark-card border-2 border-slate-200 dark:border-duo-dark-border shadow-sm"
-                    >
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-base font-black text-slate-900 dark:text-white">
-                          {concept.term}
-                        </span>
-                        <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-duo-blue dark:text-sky-400 border border-blue-200 dark:border-blue-900/50">
-                          {concept.tag || 'Khái niệm'}
-                        </span>
-                      </div>
-                      <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
-                        {concept.explanation}
-                      </p>
+            {/* Thuật ngữ then chốt rút gọn (1 khái niệm) */}
+            {concepts.length > 0 && (
+              <div className="space-y-2">
+                <span className="text-[11px] font-black uppercase tracking-wider text-slate-400 flex items-center space-x-1">
+                  <BookOpen className="w-3.5 h-3.5 text-duo-blue" />
+                  <span>Khái niệm then chốt</span>
+                </span>
+                {concepts.map((c, idx) => (
+                  <div
+                    key={idx}
+                    className="p-3.5 rounded-2xl bg-white dark:bg-duo-dark-card border-2 border-slate-200 dark:border-duo-dark-border shadow-sm text-xs sm:text-sm"
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-black text-slate-900 dark:text-white">
+                        {c.term}
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-duo-blue border border-blue-200 dark:border-blue-900/50">
+                        {c.tag || 'Trọng tâm'}
+                      </span>
                     </div>
-                  ))}
-                </div>
+                    <p className="text-slate-600 dark:text-slate-300 font-medium leading-relaxed">
+                      {c.explanation}
+                    </p>
+                  </div>
+                ))}
               </div>
             )}
           </div>
-        </div>
 
-        {/* Bottom Sticky Action Bar */}
-        <div className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-duo-dark-card/95 backdrop-blur border-t-2 border-slate-200 dark:border-duo-dark-border p-4 z-40">
-          <div className="max-w-xl mx-auto">
+          {/* Action Button */}
+          <div className="pb-4">
             <button
               onClick={() => {
-                setShowOverview(false);
+                setActiveMicroStage(null);
                 setStartTime(Date.now());
                 playSuccessSound();
                 triggerHaptic('success');
               }}
-              className="w-full py-4 rounded-2xl font-black text-white uppercase tracking-wider text-sm sm:text-base btn-duo-green flex items-center justify-center space-x-2 shadow-duo-green"
+              className="w-full py-4 rounded-2xl font-black text-white uppercase tracking-wider text-sm btn-duo-green flex items-center justify-center space-x-2 shadow-duo-green"
             >
-              <span>Bắt đầu luyện tập trắc nghiệm</span>
-              <ArrowRight className="w-5 h-5 ml-1" />
+              <span>{btnText}</span>
+              <ArrowRight className="w-4 h-4 ml-1" />
             </button>
           </div>
         </div>
-      </div>
-    );
+      );
+    }
   }
 
   return (
@@ -446,7 +596,15 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
           />
         </div>
 
-        {lessonOverview && (
+        {/* Mistake Review Badge */}
+        {isReviewingMistakes && (
+          <div className="flex items-center space-x-1.5 font-black text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-3 py-1.5 rounded-full border border-amber-200 dark:border-amber-900/50 flex-shrink-0 animate-pulse">
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>Sửa câu sai: {mistakeIndex + 1}/{mistakeQueue.length}</span>
+          </div>
+        )}
+
+        {lessonOverview && !isReviewingMistakes && (
           <button
             onClick={() => setOverviewModalOpen(true)}
             title="Xem tóm tắt lý thuyết bài học"
@@ -470,23 +628,23 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
           <div className="flex-1 flex flex-col justify-center py-4">
             <div className="inline-flex items-center space-x-2 text-duo-blue font-bold text-xs uppercase tracking-wider mb-2">
               <BookOpen className="w-4 h-4" />
-              <span>Khái niệm mới • {currentItem.lessonTitle}</span>
+              <span>Khái niệm mới • {activeItem.lessonTitle}</span>
             </div>
 
             <h2 className="text-xl sm:text-2xl font-black text-slate-800 dark:text-white mb-4">
-              {currentItem.prompt}
+              {activeItem.prompt}
             </h2>
 
             <div className="bg-white dark:bg-duo-dark-card border-2 border-slate-200 dark:border-duo-dark-border rounded-3xl p-6 shadow-sm mb-6 space-y-4">
-              {currentItem.intro && (
+              {activeItem.intro && (
                 <div className="text-slate-700 dark:text-slate-200 font-medium leading-relaxed">
-                  {currentItem.intro}
+                  {activeItem.intro}
                 </div>
               )}
 
-              {currentItem.sourceQuote && (
+              {activeItem.sourceQuote && (
                 <div className="p-3 bg-blue-50/70 dark:bg-blue-950/30 border-l-4 border-duo-blue rounded-r-xl text-xs text-slate-600 dark:text-slate-300 italic">
-                  "{currentItem.sourceQuote}"
+                  "{activeItem.sourceQuote}"
                 </div>
               )}
             </div>
@@ -500,45 +658,62 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
           </div>
         ) : (
           /* DẠNG 2: CÂU HỎI TRẮC NGHIỆM 4 ĐÁP ÁN */
-          <div className="flex-1 flex flex-col justify-center py-2">
+          <div key={activeItem.itemId || `${currentIndex}-${mistakeIndex}`} className="flex-1 flex flex-col justify-center py-2 animate-in fade-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between text-xs font-bold text-slate-400 mb-2">
-              <span>{currentItem.lessonTitle}</span>
-              {currentItem.isRetry && (
-                <span className="flex items-center text-amber-500">
+              <span className="truncate max-w-[200px]">{activeItem.lessonTitle}</span>
+              {isReviewingMistakes || activeItem.isRetry ? (
+                <span className="flex items-center text-amber-500 font-bold">
                   <RotateCcw className="w-3.5 h-3.5 mr-1" />
-                  Làm lại câu sai
+                  Sửa lại câu sai
                 </span>
-              )}
+              ) : activeItem.isReview ? (
+                <span className="flex items-center text-purple-600 dark:text-purple-400 font-bold bg-purple-50 dark:bg-purple-950/60 px-2.5 py-0.5 rounded-full border border-purple-200 dark:border-purple-800/50 text-[11px] animate-pulse">
+                  <Sparkles className="w-3 h-3 mr-1 text-purple-500" />
+                  Lặp lại ngắt quãng
+                </span>
+              ) : null}
             </div>
 
+            {activeItem.isReview && activeItem.sourceQuote && !isReviewingMistakes && !activeItem.isRetry && (
+              <div className="text-[11px] text-purple-600 dark:text-purple-300 font-semibold mb-3 flex items-center space-x-1 bg-purple-50/60 dark:bg-purple-950/40 px-2.5 py-1 rounded-xl border border-purple-200/60 dark:border-purple-900/50 w-fit">
+                <span>🔄 {activeItem.sourceQuote}</span>
+              </div>
+            )}
+
             <h2 className="text-lg sm:text-xl font-black text-slate-800 dark:text-white mb-6">
-              {currentItem.prompt}
+              {activeItem.prompt}
             </h2>
 
             {/* 4 Options Grid */}
             <div className="space-y-3">
-              {currentItem.options.map((option, idx) => {
+              {activeItem.options.map((option, idx) => {
                 const isSelected = selectedOption === option;
                 let btnStyle = "border-slate-200 dark:border-duo-dark-border bg-white dark:bg-duo-dark-card text-slate-800 dark:text-white";
                 
                 if (hasAnswered) {
                   if (cleanOptionText(option) === cleanOptionText(answerDetails?.correctAnswer)) {
-                    btnStyle = "border-duo-green bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-bold";
+                    btnStyle = "border-duo-green bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-bold shadow-sm";
                   } else if (isSelected && !isCorrect) {
-                    btnStyle = "border-duo-red bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 font-bold";
+                    btnStyle = "border-duo-red bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 font-bold shadow-sm";
                   } else {
                     btnStyle = "border-slate-100 dark:border-slate-800 opacity-40 text-slate-400";
                   }
                 } else if (isSelected) {
-                  btnStyle = "border-duo-blue bg-blue-50 dark:bg-blue-950/40 text-duo-blue font-bold shadow-duo-blue";
+                  btnStyle = "border-duo-blue bg-blue-50 dark:bg-blue-950/40 text-duo-blue font-bold shadow-duo-blue scale-[1.01]";
                 }
 
                 return (
                   <button
                     key={idx}
                     disabled={hasAnswered}
-                    onClick={() => setSelectedOption(option)}
-                    className={`w-full text-left p-4 rounded-2xl border-2 transition-all flex items-center justify-between text-sm sm:text-base font-semibold ${btnStyle}`}
+                    onClick={() => {
+                      if (!hasAnswered) {
+                        playOptionSelectSound();
+                        triggerHaptic('click');
+                        setSelectedOption(option);
+                      }
+                    }}
+                    className={`w-full text-left p-4 rounded-2xl border-2 transition-all duration-150 flex items-center justify-between text-sm sm:text-base font-semibold active:scale-[0.98] active:translate-y-0.5 ${btnStyle}`}
                   >
                     <span>{cleanOptionText(option)}</span>
                     <span className="w-6 h-6 rounded-lg border border-slate-300 dark:border-slate-600 flex items-center justify-center text-xs font-bold text-slate-400 ml-3 flex-shrink-0">
@@ -569,14 +744,14 @@ export default function SessionPage({ lessonId, onFinish, onExit }: SessionPageP
                     <>
                       <CheckCircle2 className="w-6 h-6 text-duo-green" />
                       <span className="font-black text-emerald-800 dark:text-emerald-200 text-lg">
-                        Chính xác! (+{answerDetails?.xpEarned} XP)
+                        {isReviewingMistakes ? 'Tuyệt vời! Bạn đã sửa đúng (+5 XP)' : `Chính xác! (+${answerDetails?.xpEarned || 10} XP)`}
                       </span>
                     </>
                   ) : (
                     <>
                       <XCircle className="w-6 h-6 text-duo-red" />
                       <span className="font-black text-rose-800 dark:text-rose-200 text-lg">
-                        Chưa chính xác!
+                        {isReviewingMistakes ? 'Chưa chính xác! (Sẽ ôn lại đến khi nhớ vững)' : 'Chưa chính xác! (Sẽ sửa lại ở cuối bài)'}
                       </span>
                     </>
                   )}

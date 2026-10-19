@@ -287,7 +287,9 @@ public class SessionService {
         for (Item item : items) {
             ItemState state = itemStateRepository.findById(item.getId()).orElse(null);
             boolean introduced = state != null && state.isIntroduced();
-            sessionQueue.add(mapToDto(item, lesson.getTitle(), introduced, false));
+            boolean isReview = (item.getSourceQuote() != null && item.getSourceQuote().contains("Ôn lại"))
+                    || (item.getPrompt() != null && item.getPrompt().startsWith("[Ôn"));
+            sessionQueue.add(mapToDto(item, lesson.getTitle(), introduced, isReview));
         }
 
         int estimatedMinutes = Math.max(2, (int) Math.ceil(sessionQueue.size() * 0.5));

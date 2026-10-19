@@ -33,6 +33,7 @@ public class CourseController {
     private final ScheduleService scheduleService;
     private final CourseCreationPipelineService pipelineService;
     private final com.studyapp.service.DocumentExtractionService documentExtractionService;
+    private final com.studyapp.service.ComputerNetworksCourseSeeder computerNetworksCourseSeeder;
 
     public CourseController(CourseRepository courseRepository,
                             UnitRepository unitRepository,
@@ -40,7 +41,8 @@ public class CourseController {
                             LessonRepository lessonRepository,
                             ScheduleService scheduleService,
                             CourseCreationPipelineService pipelineService,
-                            com.studyapp.service.DocumentExtractionService documentExtractionService) {
+                            com.studyapp.service.DocumentExtractionService documentExtractionService,
+                            com.studyapp.service.ComputerNetworksCourseSeeder computerNetworksCourseSeeder) {
         this.courseRepository = courseRepository;
         this.unitRepository = unitRepository;
         this.sectionRepository = sectionRepository;
@@ -48,6 +50,7 @@ public class CourseController {
         this.scheduleService = scheduleService;
         this.pipelineService = pipelineService;
         this.documentExtractionService = documentExtractionService;
+        this.computerNetworksCourseSeeder = computerNetworksCourseSeeder;
     }
 
     @GetMapping("/courses")
@@ -166,6 +169,55 @@ public class CourseController {
             }
         }
         return ResponseEntity.ok(Map.of("message", "Đã mở khóa toàn bộ lộ trình", "unlockedCount", unlockedCount));
+    }
+
+    @PostMapping("/courses/{id}/relock")
+    public ResponseEntity<Map<String, Object>> relockLessons(@PathVariable UUID id) {
+        List<com.studyapp.model.Unit> units = unitRepository.findByCourseIdOrderBySortOrderAsc(id);
+        int lockedCount = 0;
+        boolean foundFirstUnfinished = false;
+
+        for (com.studyapp.model.Unit u : units) {
+            List<com.studyapp.model.Section> sections = sectionRepository.findByUnitIdOrderBySortOrderAsc(u.getId());
+            for (com.studyapp.model.Section s : sections) {
+                List<Lesson> lessons = lessonRepository.findBySectionIdOrderBySortOrderAsc(s.getId());
+                for (Lesson l : lessons) {
+                    if ("done".equalsIgnoreCase(l.getStatus())) {
+                        continue;
+                    }
+                    if (!foundFirstUnfinished) {
+                        l.setStatus("ready");
+                        lessonRepository.save(l);
+                        foundFirstUnfinished = true;
+                    } else {
+                        if (!"locked".equalsIgnoreCase(l.getStatus())) {
+                            l.setStatus("locked");
+                            lessonRepository.save(l);
+                            lockedCount++;
+                        }
+                    }
+                }
+            }
+        }
+        return ResponseEntity.ok(Map.of("message", "Đã bật chế độ học tuần tự (khóa các bài học chưa tới)", "lockedCount", lockedCount));
+    }
+
+    @PostMapping("/courses/seed-networking")
+    public ResponseEntity<Map<String, Object>> seedNetworkingCourse(
+            @RequestParam(value = "force", defaultValue = "false") boolean force
+    ) {
+        try {
+            Course c = computerNetworksCourseSeeder.seedCourse(force);
+            return ResponseEntity.ok(Map.of(
+                    "message", "Đã nạp thành công giáo trình Mạng Máy Tính chuẩn",
+                    "courseId", c.getId(),
+                    "title", c.getTitle()
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of(
+                    "error", "Không thể nạp giáo trình: " + e.getMessage()
+            ));
+        }
     }
 
     @DeleteMapping("/courses/{id}")

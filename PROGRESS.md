@@ -15,6 +15,7 @@ Tài liệu theo dõi quá trình thực hiện tuần tự các bước trong *
 - [x] **Bước 7**: Pipeline tạo khóa học tự động, phân tích ngân hàng câu hỏi đề thi, lazy generation và bài kiểm tra đầu vào (Placement Test).
 - [x] **Bước 8**: Màn hình Cài đặt, sao lưu/khôi phục JSON, Progressive Web App (PWA), Web Audio sound & Haptic feedback.
 - [x] **Bước 9**: Đóng gói Container đa tầng (Multi-stage Dockerfile), Docker Compose cô lập an toàn & Hướng dẫn triển khai đám mây 0đ.
+- [x] **Bước 10**: Chế độ Độc lập Hoàn toàn (Standalone Client-First / Offline Mode PWA) & Hỗ trợ Vercel / Mobile: Toàn bộ 5 Chương (32 bài học, 391 câu hỏi chuẩn Eduso) chạy 100% không cần máy chủ, học mọi lúc mọi nơi trên điện thoại & máy tính.
 
 ---
 
@@ -204,3 +205,27 @@ npm run dev
        * Nút **"Lý thuyết"** gắn trên thanh điều hướng đầu trang cho phép mở lại modal tóm tắt kiến thức bất cứ lúc nào trong khi làm bài trắc nghiệm mà không mất tiến độ.
   4. **Tự động vá dữ liệu cũ (Auto-repair)**: Cơ chế `@EventListener(ApplicationReadyEvent.class)` tự động phát hiện và vá lại các khóa học cũ bị lỗi trong cơ sở dữ liệu ngay khi khởi động.
 
+
+---
+
+### Bước Đột Phá: Môn Học Chuyên Sâu "Mạng Máy Tính" Theo Cơ Chế Astra AI (Cập Nhật 18/10/2026)
+- **Mục tiêu**: Xây dựng nền tảng học và ôn thi Mạng Máy Tính chuyên biệt, chuẩn hóa toàn diện theo phong cách **Astra AI** kết hợp giao diện gamified **Duolingo**.
+- **Số liệu & Cấu trúc đã hoàn thành**:
+  - **4 Chương (Units) toàn diện**:
+    + **Chương 1**: Tổng quan Mạng máy tính & Internet (7 bài học, 56 câu hỏi).
+    + **Chương 2**: Tầng Liên kết dữ liệu & Công nghệ Ethernet (5 bài học, 42 câu hỏi).
+    + **Chương 3**: Tầng Mạng, Giao thức Internet & Định tuyến (8 bài học, 64 câu hỏi).
+    + **Chương 4**: Tầng Giao vận & Các giao thức truyền thông (7 bài học, 52 câu hỏi).
+  - **Tổng cộng**: 27 Bài học (Lessons), **214 câu hỏi trắc nghiệm chuẩn kỳ thi Eduso**.
+  - **Tất cả 214 câu hỏi đều có**:
+    + Câu hỏi đã làm sạch tiền tố định dạng bảng.
+    + 1 đáp án chính xác được thẩm định khoa học và 3 đáp án nhiễu (distractors) hợp lý.
+    + Lời giải thích sư phạm (`explanation`) chi tiết vì sao đúng / vì sao sai.
+    + Trích dẫn nguồn tài liệu chuẩn (`sourceQuote`).
+  - **Cơ chế Astra AI**:
+    + Mỗi bài học đều có phần `overview` lý thuyết tóm tắt gồm: Tiêu đề, Mô tả, 3–6 Điểm cốt lõi (`keyPoints`), và các thẻ khái niệm quan trọng (`concepts`) có nhãn (`tag`).
+    + Màn hình "Khái quát bài học" hiển thị tự động trước khi làm trắc nghiệm, kèm nút "Lý thuyết" để tra cứu bất cứ lúc nào trong phiên.
+    + Hoàn toàn độc lập, không phụ thuộc vào Gemini API bên ngoài, dữ liệu nạp tức thì 100% độ chính xác.
+  - **Kiểm thử thành công trên trình duyệt**:
+    + Giao diện Duolingo sắc nét, hiệu ứng đúng/sai, âm thanh, ngọn lửa streak, XP, pháo hoa confetti.
+    + Lộ trình học 4 chương ziczac dọc hiển thị đầy đủ 27 bài học, mở khóa bài 1 và hỗ trợ mở khóa theo nhu cầu ôn tập.

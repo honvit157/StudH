@@ -501,6 +501,44 @@ export default function SettingsPage({ onLogout, onRefreshAll }: SettingsPagePro
         </div>
       </section>
 
+      {/* Mục 3.5: Cài đặt ứng dụng trên Điện thoại (PWA) */}
+      <section className="bg-gradient-to-br from-emerald-50 to-teal-50/40 dark:from-emerald-950/30 dark:to-teal-950/20 border-2 border-emerald-200 dark:border-emerald-800/60 rounded-3xl p-5 shadow-sm space-y-3.5">
+        <div className="flex items-center space-x-2 border-b border-emerald-100 dark:border-emerald-900/40 pb-2.5">
+          <Smartphone className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+          <h2 className="text-sm font-black text-slate-800 dark:text-white uppercase tracking-wider">
+            Cài đặt lên Điện thoại (Không cần bật máy chủ)
+          </h2>
+        </div>
+
+        <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
+          StudyApp đã tích hợp công nghệ PWA (Progressive Web App). Bạn có thể thêm trực tiếp ứng dụng ra màn hình chính điện thoại, mở lên học mượt như app native và học được ngay cả khi không có mạng!
+        </p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+          <div className="p-3 rounded-2xl bg-white dark:bg-duo-dark-card border border-emerald-200/80 dark:border-emerald-800/80 space-y-1">
+            <div className="text-xs font-black text-emerald-700 dark:text-emerald-400 flex items-center space-x-1">
+              <span>🍏 Trên iPhone (Safari)</span>
+            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+              1. Mở trang web bằng Safari.<br />
+              2. Bấm nút <strong>Chia sẻ (Share ⬆️)</strong> ở dưới cùng.<br />
+              3. Chọn <strong>"Thêm vào MH chính" (Add to Home Screen)</strong>.
+            </p>
+          </div>
+
+          <div className="p-3 rounded-2xl bg-white dark:bg-duo-dark-card border border-emerald-200/80 dark:border-emerald-800/80 space-y-1">
+            <div className="text-xs font-black text-emerald-700 dark:text-emerald-400 flex items-center space-x-1">
+              <span>🤖 Trên Android (Chrome)</span>
+            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+              1. Mở trang web bằng Chrome.<br />
+              2. Bấm menu <strong>3 dấu chấm (⋮)</strong> góc trên.<br />
+              3. Chọn <strong>"Cài đặt ứng dụng"</strong> hoặc <strong>"Thêm vào Màn hình chính"</strong>.
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* Mục 4: Quản lý nguy hiểm & Đăng xuất */}
       <section className="bg-white dark:bg-duo-dark-card border-2 border-rose-100 dark:border-rose-950/50 rounded-3xl p-5 shadow-sm space-y-4">
         <div className="flex items-center justify-between">

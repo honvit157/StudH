@@ -9,6 +9,7 @@ import StatsPage from './pages/StatsPage';
 import SettingsPage from './pages/SettingsPage';
 import CreateCourseModal from './pages/CreateCourseModal';
 import { apiRequest } from './api/client';
+import { playTapSound, triggerHaptic } from './utils/sound';
 import { Flame, Sparkles, BookOpen, MapPin, BarChart3, Calendar, Play, Plus, UploadCloud, Settings, ChevronDown, Trash2 } from 'lucide-react';
 
 type Tab = 'home' | 'path' | 'schedule' | 'stats' | 'settings';
@@ -24,6 +25,27 @@ function AppContent() {
   const [coursesList, setCoursesList] = useState<any[]>([]);
   const [course, setCourse] = useState<any>(null);
   const [firstReadyLesson, setFirstReadyLesson] = useState<{ id: string; title: string } | null>(null);
+
+  useEffect(() => {
+    const syncHash = () => {
+      const h = (window.location.hash || '').toLowerCase();
+      if (h === '#path' || h === '#roadmap') setActiveTab('path');
+      else if (h === '#schedule') setActiveTab('schedule');
+      else if (h === '#stats') setActiveTab('stats');
+      else if (h === '#settings') setActiveTab('settings');
+      else if (h === '#home') setActiveTab('home');
+    };
+    syncHash();
+    window.addEventListener('hashchange', syncHash);
+    return () => window.removeEventListener('hashchange', syncHash);
+  }, []);
+
+  const switchTab = (tab: Tab) => {
+    playTapSound();
+    triggerHaptic('click');
+    setActiveTab(tab);
+    window.location.hash = tab === 'path' ? 'roadmap' : tab;
+  };
 
   const refreshData = async () => {
     try {
@@ -118,11 +140,18 @@ function AppContent() {
       <header className="sticky top-0 z-40 bg-white/90 dark:bg-duo-dark-card/90 backdrop-blur border-b border-slate-200 dark:border-duo-dark-border px-4 py-3 flex items-center justify-between max-w-lg mx-auto w-full">
         <div className="flex items-center space-x-2">
           <span className="text-xl font-black text-duo-green tracking-tight">StudyApp</span>
+          <span
+            className="hidden sm:inline-flex items-center space-x-1 px-1.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-300/60 dark:border-emerald-700 select-none cursor-help"
+            title="Chế độ Độc lập (Client-First): Học mọi lúc mọi nơi trên điện thoại & máy tính mà không cần bật máy chủ!"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>Offline Ready</span>
+          </span>
           {coursesList.length > 0 && (
             <div className="relative">
               <button
                 onClick={() => setIsCourseDropdownOpen(!isCourseDropdownOpen)}
-                className="flex items-center space-x-1 text-xs font-bold px-2 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition max-w-[130px] sm:max-w-[170px]"
+                className="flex items-center space-x-1 text-xs font-bold px-2 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition max-w-[120px] sm:max-w-[170px]"
                 title="Chọn môn học"
               >
                 <span className="truncate">{course?.title || 'Chọn môn'}</span>
@@ -341,7 +370,8 @@ function AppContent() {
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-duo-dark-card/95 backdrop-blur border-t-2 border-slate-200 dark:border-duo-dark-border z-30">
         <div className="max-w-lg mx-auto flex items-center justify-around py-2">
           <button
-            onClick={() => setActiveTab('home')}
+            id="tab-home"
+            onClick={() => switchTab('home')}
             className={`flex flex-col items-center p-2 font-bold text-[11px] transition-colors ${
               activeTab === 'home' ? 'text-duo-green' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
             }`}
@@ -351,7 +381,8 @@ function AppContent() {
           </button>
 
           <button
-            onClick={() => setActiveTab('path')}
+            id="tab-path"
+            onClick={() => switchTab('path')}
             className={`flex flex-col items-center p-2 font-bold text-[11px] transition-colors ${
               activeTab === 'path' ? 'text-duo-green' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
             }`}
@@ -361,7 +392,8 @@ function AppContent() {
           </button>
 
           <button
-            onClick={() => setActiveTab('schedule')}
+            id="tab-schedule"
+            onClick={() => switchTab('schedule')}
             className={`flex flex-col items-center p-2 font-bold text-[11px] transition-colors ${
               activeTab === 'schedule' ? 'text-duo-green' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
             }`}
@@ -371,7 +403,8 @@ function AppContent() {
           </button>
 
           <button
-            onClick={() => setActiveTab('stats')}
+            id="tab-stats"
+            onClick={() => switchTab('stats')}
             className={`flex flex-col items-center p-2 font-bold text-[11px] transition-colors ${
               activeTab === 'stats' ? 'text-duo-green' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
             }`}
@@ -381,7 +414,8 @@ function AppContent() {
           </button>
 
           <button
-            onClick={() => setActiveTab('settings')}
+            id="tab-settings"
+            onClick={() => switchTab('settings')}
             className={`flex flex-col items-center p-2 font-bold text-[11px] transition-colors ${
               activeTab === 'settings' ? 'text-duo-green' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
             }`}

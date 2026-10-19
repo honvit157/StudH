@@ -574,6 +574,35 @@ public class AiService {
      * Hiển thị cho người học trước khi bắt đầu bài tập trắc nghiệm.
      */
     public LessonOverviewDto generateLessonOverview(String lessonTitle, String sourceText, List<Item> items) {
+        if (sourceText != null && sourceText.trim().startsWith("{") && sourceText.contains("\"overview\"")) {
+            try {
+                var root = objectMapper.readTree(sourceText);
+                if (root.has("overview")) {
+                    var ov = root.get("overview");
+                    String oTitle = ov.has("title") ? ov.get("title").asText() : lessonTitle;
+                    String oDesc = ov.has("description") ? ov.get("description").asText() : "";
+                    List<String> oKeyPoints = new ArrayList<>();
+                    if (ov.has("keyPoints")) {
+                        for (var kp : ov.get("keyPoints")) {
+                            oKeyPoints.add(kp.asText());
+                        }
+                    }
+                    List<LessonOverviewDto.ConceptItemDto> oConcepts = new ArrayList<>();
+                    if (ov.has("concepts")) {
+                        for (var c : ov.get("concepts")) {
+                            String term = c.has("term") ? c.get("term").asText() : "";
+                            String explanation = c.has("explanation") ? c.get("explanation").asText() :
+                                    (c.has("definition") ? c.get("definition").asText() : "");
+                            String tag = c.has("tag") ? c.get("tag").asText() :
+                                    (c.has("category") ? c.get("category").asText() : "Khái niệm");
+                            oConcepts.add(new LessonOverviewDto.ConceptItemDto(term, explanation, tag));
+                        }
+                    }
+                    return new LessonOverviewDto(oTitle, oDesc, oKeyPoints, oConcepts);
+                }
+            } catch (Exception ignored) {}
+        }
+
         String cleanTitle = lessonTitle != null ? lessonTitle.replaceFirst("^[#\\*\\-\\s]+", "").trim() : "Kiến thức bài học";
         List<String> keyPoints = new ArrayList<>();
         List<LessonOverviewDto.ConceptItemDto> concepts = new ArrayList<>();

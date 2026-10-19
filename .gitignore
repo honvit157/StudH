@@ -62,5 +62,6 @@ yarn-error.log*
 Thumbs.db
 
 # Database
-data/
+/data/
 *.db
+!frontend/src/data/
